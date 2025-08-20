@@ -47,6 +47,10 @@ type DavProperties = {
 	getetag: string | undefined;
 	getlastmodified: string | undefined;
 	resourcetype: string;
+	supportedlock: string;
+	lockdiscovery: string;
+	ishidden: string;
+	isreadonly: string;
 };
 
 function fromR2Object(object: R2Object | null | undefined): DavProperties {
@@ -60,6 +64,10 @@ function fromR2Object(object: R2Object | null | undefined): DavProperties {
 			getetag: undefined,
 			getlastmodified: new Date().toUTCString(),
 			resourcetype: '<collection />',
+			supportedlock: '<lockentry><lockscope><exclusive/></lockscope><locktype><write/></locktype></lockentry>',
+			lockdiscovery: '',
+			ishidden: '0',
+			isreadonly: '0',
 		};
 	}
 
@@ -72,6 +80,10 @@ function fromR2Object(object: R2Object | null | undefined): DavProperties {
 		getetag: object.etag,
 		getlastmodified: object.uploaded.toUTCString(),
 		resourcetype: object.customMetadata?.resourcetype ?? '',
+		supportedlock: '<lockentry><lockscope><exclusive/></lockscope><locktype><write/></locktype></lockentry>',
+		lockdiscovery: '',
+		ishidden: '0',
+		isreadonly: '0',
 	};
 }
 
@@ -831,8 +843,50 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 	}
 }
 
-const DAV_CLASS = '1, 3';
-const SUPPORT_METHODS = ['OPTIONS', 'PROPFIND', 'PROPPATCH', 'MKCOL', 'GET', 'HEAD', 'PUT', 'DELETE', 'COPY', 'MOVE'];
+async function handle_lock(request: Request, bucket: R2Bucket): Promise<Response> {
+	// Simple lock response - no actual locking implementation
+	const lockToken = `opaquelocktoken:${crypto.randomUUID()}`;
+	const lockXML = `<?xml version="1.0" encoding="utf-8"?>
+<prop xmlns="DAV:">
+	<lockdiscovery>
+		<activelock>
+			<locktype><write/></locktype>
+			<lockscope><exclusive/></lockscope>
+			<depth>0</depth>
+			<timeout>Second-3600</timeout>
+			<locktoken><href>${lockToken}</href></locktoken>
+		</activelock>
+	</lockdiscovery>
+</prop>`;
+
+	return new Response(lockXML, {
+		status: 200,
+		headers: {
+			'Content-Type': 'application/xml',
+			'Lock-Token': `<${lockToken}>`,
+		},
+	});
+}
+
+async function handle_unlock(request: Request, bucket: R2Bucket): Promise<Response> {
+	return new Response(null, { status: 204 });
+}
+
+const DAV_CLASS = '1, 2';
+const SUPPORT_METHODS = [
+	'OPTIONS',
+	'PROPFIND',
+	'PROPPATCH',
+	'MKCOL',
+	'GET',
+	'HEAD',
+	'PUT',
+	'DELETE',
+	'COPY',
+	'MOVE',
+	'LOCK',
+	'UNLOCK',
+];
 
 async function dispatch_handler(request: Request, bucket: R2Bucket): Promise<Response> {
 	switch (request.method) {
@@ -871,6 +925,12 @@ async function dispatch_handler(request: Request, bucket: R2Bucket): Promise<Res
 		}
 		case 'MOVE': {
 			return await handle_move(request, bucket);
+		}
+		case 'LOCK': {
+			return await handle_lock(request, bucket);
+		}
+		case 'UNLOCK': {
+			return await handle_unlock(request, bucket);
 		}
 		default: {
 			return new Response('Method Not Allowed', {
