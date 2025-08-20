@@ -106,10 +106,145 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 				continue;
 			}
 			let href = `/${object.key + (object.customMetadata?.resourcetype === '<collection />' ? '/' : '')}`;
-			page += `<a href="${href}">${object.httpMetadata?.contentDisposition ?? object.key.slice(prefix.length)}</a><br>`;
+			let fileName = object.httpMetadata?.contentDisposition ?? object.key.slice(prefix.length);
+			let isDirectory = object.customMetadata?.resourcetype === '<collection />';
+
+			if (isDirectory) {
+				page += `<a href="${href}">${fileName}</a><br>`;
+			} else {
+				page += `<div class="file-item clearfix"><a href="${href}">${fileName}</a><button class="delete-btn" onclick="deleteFile('/${object.key}', this)">✗</button></div>`;
+			}
 		}
+
+		// JavaScript functions
+		const deleteFileFunction = `
+			async function deleteFile(path, btn) {
+				if (!confirm('Are you sure you want to delete this file?')) return;
+				btn.disabled = true;
+				btn.textContent = 'Deleting...';
+				try {
+					const response = await fetch(path, {
+						method: 'DELETE',
+						credentials: 'include'
+					});
+					if (response.ok) {
+						btn.parentElement.remove();
+					} else {
+						alert('Failed to delete file: ' + response.statusText);
+						btn.disabled = false;
+						btn.textContent = 'Delete';
+					}
+				} catch (error) {
+					alert('Error deleting file: ' + error.message);
+					btn.disabled = false;
+					btn.textContent = 'Delete';
+				}
+			}
+		`;
+
+		const dragUploadFunction = `
+			const fileList = document.querySelector('.file-list');
+			
+			fileList.addEventListener('dragover', (e) => {
+				e.preventDefault();
+				fileList.classList.add('drag-over');
+			});
+			
+			fileList.addEventListener('dragleave', (e) => {
+				if (!fileList.contains(e.relatedTarget)) {
+					fileList.classList.remove('drag-over');
+				}
+			});
+			
+			fileList.addEventListener('drop', async (e) => {
+				e.preventDefault();
+				fileList.classList.remove('drag-over');
+				const files = e.dataTransfer.files;
+				
+				for (let file of files) {
+					try {
+						await fetch(window.location.pathname + file.name, {
+							method: 'PUT',
+							body: file,
+							credentials: 'include'
+						});
+						location.reload();
+					} catch (err) {
+						alert('Upload failed: ' + file.name);
+					}
+				}
+			});
+		`;
+
 		// 定义模板
-		var pageSource = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>R2Storage</title><style>*{box-sizing:border-box;}body{padding:10px;font-family:'Segoe UI','Circular','Roboto','Lato','Helvetica Neue','Arial Rounded MT Bold','sans-serif';}a{display:inline-block;width:100%;color:#000;text-decoration:none;padding:5px 10px;cursor:pointer;border-radius:5px;}a:hover{background-color:#60C590;color:white;}a[href="../"]{background-color:#cbd5e1;}</style></head><body><h1>R2 Storage</h1><div>${page}</div></body></html>`;
+		var pageSource = `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width,initial-scale=1.0">
+	<title>R2Storage</title>
+	<style>
+		* { box-sizing: border-box; }
+		body {
+			padding: 10px;
+			font-family: 'Segoe UI', 'Circular', 'Roboto', 'Lato', 'Helvetica Neue', 'Arial Rounded MT Bold', 'sans-serif';
+		}
+		a {
+			display: inline-block;
+			width: calc(100% - 60px);
+			color: #000;
+			text-decoration: none;
+			padding: 5px 10px;
+			cursor: pointer;
+			border-radius: 5px;
+			float: left;
+		}
+		a:hover { background-color: #60C590; color: white; }
+		a[href="../"] { background-color: #cbd5e1; width: 100%; }
+		a[href="../"]:after { content: ""; }
+		.file-list {
+			display: flex;
+			flex-direction: column;
+			min-height: 200px;
+			padding: 10px;
+			border-radius: 3px;
+		}
+		.file-list.drag-over {
+			background: #e8f5e8;
+			border: 2px dashed #60C590;
+		}
+		.file-item {
+			display: flex;
+			align-items: center;
+			margin-bottom: 2px;
+		}
+		.delete-btn {
+			background: #ff4757;
+			color: white;
+			border: none;
+			padding: 5px 10px;
+			border-radius: 3px;
+			cursor: pointer;
+			margin-left: 10px;
+			font-size: 12px;
+		}
+		.delete-btn:hover { background: #ff3838; }
+		.clearfix::after {
+			content: "";
+			display: table;
+			clear: both;
+		}
+	</style>
+</head>
+<body>
+	<h1>R2 Storage</h1>
+	<div class="file-list">${page}</div>
+	<script>
+		${deleteFileFunction}
+		${dragUploadFunction}
+	</script>
+</body>
+</html>`;
 
 		return new Response(pageSource, {
 			status: 200,
@@ -140,28 +275,28 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 					...{ 'Content-Range': `bytes ${rangeOffset}-${rangeEnd}/${object.size}` },
 					...(object.httpMetadata?.contentDisposition
 						? {
-							'Content-Disposition': object.httpMetadata.contentDisposition,
-						}
+								'Content-Disposition': object.httpMetadata.contentDisposition,
+							}
 						: {}),
 					...(object.httpMetadata?.contentEncoding
 						? {
-							'Content-Encoding': object.httpMetadata.contentEncoding,
-						}
+								'Content-Encoding': object.httpMetadata.contentEncoding,
+							}
 						: {}),
 					...(object.httpMetadata?.contentLanguage
 						? {
-							'Content-Language': object.httpMetadata.contentLanguage,
-						}
+								'Content-Language': object.httpMetadata.contentLanguage,
+							}
 						: {}),
 					...(object.httpMetadata?.cacheControl
 						? {
-							'Cache-Control': object.httpMetadata.cacheControl,
-						}
+								'Cache-Control': object.httpMetadata.cacheControl,
+							}
 						: {}),
 					...(object.httpMetadata?.cacheExpiry
 						? {
-							'Cache-Expiry': object.httpMetadata.cacheExpiry.toISOString(),
-						}
+								'Cache-Expiry': object.httpMetadata.cacheExpiry.toISOString(),
+							}
 						: {}),
 				},
 			});
@@ -314,9 +449,9 @@ function generate_propfind_response(object: R2Object | null): string {
 		<propstat>
 			<prop>
 			${Object.entries(fromR2Object(object))
-			.filter(([_, value]) => value !== undefined)
-			.map(([key, value]) => `<${key}>${value}</${key}>`)
-			.join('\n				')}
+				.filter(([_, value]) => value !== undefined)
+				.map(([key, value]) => `<${key}>${value}</${key}>`)
+				.join('\n				')}
 			</prop>
 			<status>HTTP/1.1 200 OK</status>
 		</propstat>
@@ -750,12 +885,12 @@ async function dispatch_handler(request: Request, bucket: R2Bucket): Promise<Res
 }
 
 function is_authorized(authorization_header: string, username: string, password: string): boolean {
-    const encoder = new TextEncoder();
+	const encoder = new TextEncoder();
 
-    const header = encoder.encode(authorization_header);
-    const expected = encoder.encode(`Basic ${btoa(`${username}:${password}`)}`);
+	const header = encoder.encode(authorization_header);
+	const expected = encoder.encode(`Basic ${btoa(`${username}:${password}`)}`);
 
-    return header.byteLength === expected.byteLength && crypto.subtle.timingSafeEqual(header, expected);
+	return header.byteLength === expected.byteLength && crypto.subtle.timingSafeEqual(header, expected);
 }
 
 export default {
