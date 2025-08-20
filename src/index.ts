@@ -341,12 +341,15 @@ async function handle_put(request: Request, bucket: R2Bucket): Promise<Response>
 
 	let resource_path = make_resource_path(request);
 
-	// Check if the parent directory exists
+	// Auto-create parent directories if they don't exist (for Finder compatibility)
 	let dirpath = resource_path.split('/').slice(0, -1).join('/');
 	if (dirpath !== '') {
 		let dir = await bucket.head(dirpath);
-		if (!(dir && dir.customMetadata?.resourcetype === '<collection />')) {
-			return new Response('Conflict', { status: 409 });
+		if (!dir) {
+			// Create parent directory automatically
+			await bucket.put(dirpath, new Uint8Array(), {
+				customMetadata: { resourcetype: '<collection />' },
+			});
 		}
 	}
 
@@ -976,7 +979,7 @@ export default {
 		response.headers.set('Access-Control-Allow-Methods', SUPPORT_METHODS.join(', '));
 		response.headers.set(
 			'Access-Control-Allow-Headers',
-			['authorization', 'content-type', 'depth', 'overwrite', 'destination', 'range'].join(', '),
+			['authorization', 'content-type', 'depth', 'overwrite', 'destination', 'range', 'lock-token', 'timeout', 'if', 'if-match', 'if-none-match'].join(', '),
 		);
 		response.headers.set(
 			'Access-Control-Expose-Headers',
@@ -986,6 +989,7 @@ export default {
 		);
 		response.headers.set('Access-Control-Allow-Credentials', 'false');
 		response.headers.set('Access-Control-Max-Age', '86400');
+		response.headers.set('MS-Author-Via', 'DAV');
 
 		return response;
 	},
