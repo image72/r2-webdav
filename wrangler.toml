@@ -10,6 +10,11 @@ compatibility_flags = ["nodejs_compat"]
 binding = "bucket" # <~ valid JavaScript variable name
 bucket_name = "webdav"
 
+# Environment variables (configured via `wrangler secret put`)
+[vars]
+# USERNAME = "set via Cloudflare Secrets"
+# PASSWORD = "set via Cloudflare Secrets"
+
 # Docs: https://developers.cloudflare.com/workers/observability/logs/workers-logs/#enable-workers-logs
 [observability]
 enabled = true
