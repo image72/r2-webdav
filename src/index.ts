@@ -122,7 +122,7 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 			let isDirectory = object.customMetadata?.resourcetype === '<collection />';
 
 			if (isDirectory) {
-				page += `<a href="${href}">${fileName}</a><br>`;
+				page += `<a href="${href}">${fileName}/</a><br>`;
 			} else {
 				page += `<div class="file-item clearfix"><a href="${href}">${fileName}</a><button class="delete-btn" onclick="deleteFile('/${object.key}', this)">✗</button></div>`;
 			}
@@ -156,23 +156,23 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 
 		const dragUploadFunction = `
 			const fileList = document.querySelector('.file-list');
-			
+
 			fileList.addEventListener('dragover', (e) => {
 				e.preventDefault();
 				fileList.classList.add('drag-over');
 			});
-			
+
 			fileList.addEventListener('dragleave', (e) => {
 				if (!fileList.contains(e.relatedTarget)) {
 					fileList.classList.remove('drag-over');
 				}
 			});
-			
+
 			fileList.addEventListener('drop', async (e) => {
 				e.preventDefault();
 				fileList.classList.remove('drag-over');
 				const files = e.dataTransfer.files;
-				
+
 				for (let file of files) {
 					try {
 						await fetch(window.location.pathname + file.name, {
@@ -188,6 +188,34 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 			});
 		`;
 
+		// file select & upload
+		const fileSelectFunction = `
+			async function selectAndUploadFiles() {
+				const fileInput = document.createElement('input');
+				fileInput.type = 'file';
+				fileInput.multiple = true;
+				fileInput.onchange = async (event) => {
+					const files = event.target.files;
+					if (!files || files.length === 0) return;
+
+					for (let file of files) {
+						try {
+							await fetch(window.location.pathname + file.name, {
+								method: 'PUT',
+								body: file,
+								credentials: 'include'
+							});
+						} catch (err) {
+							alert('Upload failed: ' + file.name);
+							return;
+						}
+					}
+					location.reload();
+				};
+				fileInput.click();
+			}
+		`;
+
 		// 定义模板
 		var pageSource = `<!DOCTYPE html>
 <html lang="en">
@@ -200,6 +228,9 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 		body {
 			padding: 10px;
 			font-family: 'Segoe UI', 'Circular', 'Roboto', 'Lato', 'Helvetica Neue', 'Arial Rounded MT Bold', 'sans-serif';
+			position: relative;
+			min-height: 100vh;
+			margin: 0;
 		}
 		a {
 			display: inline-block;
@@ -246,14 +277,40 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 			display: table;
 			clear: both;
 		}
+		/* float upload button */
+		.floating-btn {
+			position: fixed;
+			bottom: 30px;
+			right: 30px;
+			width: 60px;
+			height: 60px;
+			background-color: #60C590;
+			border-radius: 50%;
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			color: white;
+			font-size: 36px;
+			line-height: 60px;
+			cursor: pointer;
+			box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+			z-index: 1000;
+			transition: background-color 0.3s;
+			text-align: center;
+		}
+		.floating-btn:hover {
+			background-color: #4e9e7a;
+		}
 	</style>
 </head>
 <body>
 	<h1>R2 Storage</h1>
 	<div class="file-list">${page}</div>
+	<div class="floating-btn" onclick="selectAndUploadFiles()">+</div>
 	<script>
 		${deleteFileFunction}
 		${dragUploadFunction}
+		${fileSelectFunction}
 	</script>
 </body>
 </html>`;
@@ -287,28 +344,28 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 					...{ 'Content-Range': `bytes ${rangeOffset}-${rangeEnd}/${object.size}` },
 					...(object.httpMetadata?.contentDisposition
 						? {
-								'Content-Disposition': object.httpMetadata.contentDisposition,
-							}
+							'Content-Disposition': object.httpMetadata.contentDisposition,
+						}
 						: {}),
 					...(object.httpMetadata?.contentEncoding
 						? {
-								'Content-Encoding': object.httpMetadata.contentEncoding,
-							}
+							'Content-Encoding': object.httpMetadata.contentEncoding,
+						}
 						: {}),
 					...(object.httpMetadata?.contentLanguage
 						? {
-								'Content-Language': object.httpMetadata.contentLanguage,
-							}
+							'Content-Language': object.httpMetadata.contentLanguage,
+						}
 						: {}),
 					...(object.httpMetadata?.cacheControl
 						? {
-								'Cache-Control': object.httpMetadata.cacheControl,
-							}
+							'Cache-Control': object.httpMetadata.cacheControl,
+						}
 						: {}),
 					...(object.httpMetadata?.cacheExpiry
 						? {
-								'Cache-Expiry': object.httpMetadata.cacheExpiry.toISOString(),
-							}
+							'Cache-Expiry': object.httpMetadata.cacheExpiry.toISOString(),
+						}
 						: {}),
 				},
 			});
@@ -464,9 +521,9 @@ function generate_propfind_response(object: R2Object | null): string {
 		<propstat>
 			<prop>
 			${Object.entries(fromR2Object(object))
-				.filter(([_, value]) => value !== undefined)
-				.map(([key, value]) => `<${key}>${value}</${key}>`)
-				.join('\n				')}
+			.filter(([_, value]) => value !== undefined)
+			.map(([key, value]) => `<${key}>${value}</${key}>`)
+			.join('\n				')}
 			</prop>
 			<status>HTTP/1.1 200 OK</status>
 		</propstat>
