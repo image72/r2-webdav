@@ -8,6 +8,14 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
+// Performance configuration constants
+const PERFORMANCE_CONFIG = {
+	MAX_OBJECTS_PER_REQUEST: 3000, // Limit for directory listings
+	MAX_PROPFIND_DEPTH: 5, // Maximum depth for PROPFIND infinity requests
+	MAX_CONCURRENT_OPERATIONS: 50, // Concurrent operations limit
+	MAX_BATCH_DELETE_SIZE: 3000, // Maximum objects per batch delete
+} as const;
+
 export interface Env {
 	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
 	bucket: R2Bucket;
@@ -17,8 +25,11 @@ export interface Env {
 	PASSWORD: string;
 }
 
-async function* listAll(bucket: R2Bucket, prefix: string, isRecursive: boolean = false) {
+async function* listAll(bucket: R2Bucket, prefix: string, isRecursive: boolean = false, maxObjects?: number) {
 	let cursor: string | undefined = undefined;
+	let objectCount = 0;
+	const limit = maxObjects ?? PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST;
+
 	do {
 		var r2_objects = await bucket.list({
 			prefix: prefix,
@@ -29,13 +40,28 @@ async function* listAll(bucket: R2Bucket, prefix: string, isRecursive: boolean =
 		});
 
 		for (let object of r2_objects.objects) {
+			if (objectCount >= limit) {
+				return; // Stop when reaching the limit
+			}
 			yield object;
+			objectCount++;
 		}
 
 		if (r2_objects.truncated) {
 			cursor = r2_objects.cursor;
 		}
-	} while (r2_objects.truncated);
+	} while (r2_objects.truncated && objectCount < limit);
+}
+
+// Utility function to process promises with concurrency limit
+async function processWithConcurrencyLimit<T>(items: T[], processor: (item: T) => Promise<void>, concurrencyLimit: number = PERFORMANCE_CONFIG.MAX_CONCURRENT_OPERATIONS): Promise<void> {
+	const results: Promise<void>[] = [];
+	for (let i = 0; i < items.length; i += concurrencyLimit) {
+		const batch = items.slice(i, i + concurrencyLimit);
+		const batchPromises = batch.map(processor);
+		results.push(...batchPromises);
+		await Promise.all(batchPromises);
+	}
 }
 
 type DavProperties = {
@@ -156,23 +182,23 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 
 		const dragUploadFunction = `
 			const fileList = document.querySelector('.file-list');
-			
+
 			fileList.addEventListener('dragover', (e) => {
 				e.preventDefault();
 				fileList.classList.add('drag-over');
 			});
-			
+
 			fileList.addEventListener('dragleave', (e) => {
 				if (!fileList.contains(e.relatedTarget)) {
 					fileList.classList.remove('drag-over');
 				}
 			});
-			
+
 			fileList.addEventListener('drop', async (e) => {
 				e.preventDefault();
 				fileList.classList.remove('drag-over');
 				const files = e.dataTransfer.files;
-				
+
 				for (let file of files) {
 					try {
 						await fetch(window.location.pathname + file.name, {
@@ -287,28 +313,28 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 					...{ 'Content-Range': `bytes ${rangeOffset}-${rangeEnd}/${object.size}` },
 					...(object.httpMetadata?.contentDisposition
 						? {
-								'Content-Disposition': object.httpMetadata.contentDisposition,
-							}
+							'Content-Disposition': object.httpMetadata.contentDisposition,
+						}
 						: {}),
 					...(object.httpMetadata?.contentEncoding
 						? {
-								'Content-Encoding': object.httpMetadata.contentEncoding,
-							}
+							'Content-Encoding': object.httpMetadata.contentEncoding,
+						}
 						: {}),
 					...(object.httpMetadata?.contentLanguage
 						? {
-								'Content-Language': object.httpMetadata.contentLanguage,
-							}
+							'Content-Language': object.httpMetadata.contentLanguage,
+						}
 						: {}),
 					...(object.httpMetadata?.cacheControl
 						? {
-								'Cache-Control': object.httpMetadata.cacheControl,
-							}
+							'Cache-Control': object.httpMetadata.cacheControl,
+						}
 						: {}),
 					...(object.httpMetadata?.cacheExpiry
 						? {
-								'Cache-Expiry': object.httpMetadata.cacheExpiry.toISOString(),
-							}
+							'Cache-Expiry': object.httpMetadata.cacheExpiry.toISOString(),
+						}
 						: {}),
 				},
 			});
@@ -353,8 +379,8 @@ async function handle_put(request: Request, bucket: R2Bucket): Promise<Response>
 		}
 	}
 
-	let body = await request.arrayBuffer();
-	await bucket.put(resource_path, body, {
+	// Stream upload for better memory efficiency with large files
+	await bucket.put(resource_path, request.body, {
 		onlyIf: request.headers,
 		httpMetadata: request.headers,
 	});
@@ -365,13 +391,18 @@ async function handle_delete(request: Request, bucket: R2Bucket): Promise<Respon
 	let resource_path = make_resource_path(request);
 
 	if (resource_path === '') {
+		// Batch delete all objects with size limit
 		let r2_objects,
 			cursor: string | undefined = undefined;
 		do {
 			r2_objects = await bucket.list({ cursor: cursor });
 			let keys = r2_objects.objects.map((object) => object.key);
 			if (keys.length > 0) {
-				await bucket.delete(keys);
+				// Process in batches to respect limits
+				for (let i = 0; i < keys.length; i += PERFORMANCE_CONFIG.MAX_BATCH_DELETE_SIZE) {
+					const batch = keys.slice(i, i + PERFORMANCE_CONFIG.MAX_BATCH_DELETE_SIZE);
+					await bucket.delete(batch);
+				}
 			}
 
 			if (r2_objects.truncated) {
@@ -391,6 +422,7 @@ async function handle_delete(request: Request, bucket: R2Bucket): Promise<Respon
 		return new Response(null, { status: 204 });
 	}
 
+	// Batch delete collection contents with size limit
 	let r2_objects,
 		cursor: string | undefined = undefined;
 	do {
@@ -400,7 +432,11 @@ async function handle_delete(request: Request, bucket: R2Bucket): Promise<Respon
 		});
 		let keys = r2_objects.objects.map((object) => object.key);
 		if (keys.length > 0) {
-			await bucket.delete(keys);
+			// Process in batches to respect limits
+			for (let i = 0; i < keys.length; i += PERFORMANCE_CONFIG.MAX_BATCH_DELETE_SIZE) {
+				const batch = keys.slice(i, i + PERFORMANCE_CONFIG.MAX_BATCH_DELETE_SIZE);
+				await bucket.delete(batch);
+			}
 		}
 
 		if (r2_objects.truncated) {
@@ -464,9 +500,9 @@ function generate_propfind_response(object: R2Object | null): string {
 		<propstat>
 			<prop>
 			${Object.entries(fromR2Object(object))
-				.filter(([_, value]) => value !== undefined)
-				.map(([key, value]) => `<${key}>${value}</${key}>`)
-				.join('\n				')}
+			.filter(([_, value]) => value !== undefined)
+			.map(([key, value]) => `<${key}>${value}</${key}>`)
+			.join('\n				')}
 			</prop>
 			<status>HTTP/1.1 200 OK</status>
 		</propstat>
@@ -507,9 +543,15 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 				break;
 			case 'infinity':
 				{
+					// Limit infinity depth for performance
 					let prefix = resource_path === '' ? resource_path : resource_path + '/';
-					for await (let object of listAll(bucket, prefix, true)) {
+					let objectCount = 0;
+					for await (let object of listAll(bucket, prefix, true, PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST)) {
+						if (objectCount >= PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST) {
+							break; // Prevent excessive processing
+						}
 						page += generate_propfind_response(object);
+						objectCount++;
 					}
 				}
 				break;
@@ -537,10 +579,7 @@ async function handle_proppatch(request: Request, bucket: R2Bucket): Promise<Res
 		return new Response('Not Found', { status: 404 });
 	}
 
-	// 读取请求体
-	const body = await request.text();
-
-	// 使用 HTMLRewriter 解析 XML
+	// 使用 HTMLRewriter 直接流式解析请求体，避免 await request.text()
 	const setProperties: { [key: string]: string } = {};
 	const removeProperties: string[] = [];
 	let currentAction: 'set' | 'remove' | null = null;
@@ -580,8 +619,8 @@ async function handle_proppatch(request: Request, bucket: R2Bucket): Promise<Res
 		}
 	}
 
-	// 使用 HTMLRewriter 解析请求体
-	await new HTMLRewriter().on('propertyupdate', new PropHandler()).transform(new Response(body)).arrayBuffer();
+	// 使用 HTMLRewriter 直接解析 request.body 流，避免内存加载
+	await new HTMLRewriter().on('propertyupdate', new PropHandler()).transform(new Response(request.body)).arrayBuffer();
 
 	// 复制原有的自定义元数据
 	const customMetadata = object.customMetadata ? { ...object.customMetadata } : {};
@@ -693,11 +732,18 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 						});
 					}
 				};
-				let promise_array = [copy(resource)];
+
+				// Copy root resource first
+				await copy(resource);
+
+				// Process child objects with concurrency limit
+				const childObjects: R2Object[] = [];
 				for await (let object of listAll(bucket, prefix, true)) {
-					promise_array.push(copy(object));
+					childObjects.push(object);
 				}
-				await Promise.all(promise_array);
+
+				await processWithConcurrencyLimit(childObjects, copy);
+
 				if (destination_exists) {
 					return new Response(null, { status: 204 });
 				} else {
@@ -797,11 +843,18 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 						await bucket.delete(object.key);
 					}
 				};
-				let promise_array = [move(resource)];
+
+				// Move root resource first
+				await move(resource);
+
+				// Process child objects with concurrency limit
+				const childObjects: R2Object[] = [];
 				for await (let object of listAll(bucket, prefix, true)) {
-					promise_array.push(move(object));
+					childObjects.push(object);
 				}
-				await Promise.all(promise_array);
+
+				await processWithConcurrencyLimit(childObjects, move);
+
 				if (destination_exists) {
 					return new Response(null, { status: 204 });
 				} else {
@@ -979,7 +1032,19 @@ export default {
 		response.headers.set('Access-Control-Allow-Methods', SUPPORT_METHODS.join(', '));
 		response.headers.set(
 			'Access-Control-Allow-Headers',
-			['authorization', 'content-type', 'depth', 'overwrite', 'destination', 'range', 'lock-token', 'timeout', 'if', 'if-match', 'if-none-match'].join(', '),
+			[
+				'authorization',
+				'content-type',
+				'depth',
+				'overwrite',
+				'destination',
+				'range',
+				'lock-token',
+				'timeout',
+				'if',
+				'if-match',
+				'if-none-match',
+			].join(', '),
 		);
 		response.headers.set(
 			'Access-Control-Expose-Headers',
