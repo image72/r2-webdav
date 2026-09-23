@@ -12,24 +12,14 @@
 
 ## 界面
 
-<p align="center">
-  <img src="docs/screenshots/browse-mobile.png" width="240" alt="手机端目录列表">
-  <img src="docs/screenshots/actions-mobile.png" width="240" alt="长按弹出的操作面板">
-  <img src="docs/screenshots/editor-preview-mobile.png" width="240" alt="编辑器里直接查看 Markdown 渲染效果">
-</p>
-<p align="center"><sub>目录列表 · 长按弹出的操作面板 · 编辑器里的「查看」</sub></p>
+移动优先：手机浏览器上就是一套文件管理 App；桌面端是同一套页面，内容窄栏居中，预览 / 编辑改成右侧抽屉。
 
 <p align="center">
-  <img src="docs/screenshots/browse-desktop.png" width="410" alt="桌面端目录列表">
-  <img src="docs/screenshots/preview-markdown-desktop.png" width="410" alt="Markdown 预览，含表格、代码块与 mermaid 流程图">
+  <img src="docs/screenshots/browse-mobile.png" width="220" alt="目录列表：目录优先，图标按类型着色">
+  <img src="docs/screenshots/actions-mobile.png" width="220" alt="长按弹出的操作面板">
+  <img src="docs/screenshots/editor-preview-mobile.png" width="220" alt="在编辑器里直接查看 Markdown 渲染效果">
 </p>
-<p align="center"><sub>桌面端：列表 · Markdown 预览（表格 / 代码块 / mermaid 都会画）</sub></p>
-
-<p align="center">
-  <img src="docs/screenshots/preview-image-desktop.jpg" width="410" alt="图片预览">
-  <img src="docs/screenshots/archive-progress-mobile.png" width="240" alt="打包解压的进度提示，可取消">
-</p>
-<p align="center"><sub>图片预览 · 长任务的进度与取消</sub></p>
+<p align="center"><sub>目录列表 · 长按弹出操作面板 · 编辑器里直接「查看」渲染效果（表格、代码块、mermaid 都会画）</sub></p>
 
 ## 功能
 
