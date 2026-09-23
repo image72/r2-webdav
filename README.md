@@ -38,7 +38,7 @@
 | 长任务 | 打包 / 解压有进度、随时可取消；失败或取消会把半成品清掉，不留垃圾对象                                                     |
 
 <details>
-<summary><b>WebDAV 层</b>：协议实现细节（DAV class 1, 2，以及被真实客户端逼出来的那些坑）</summary>
+<summary><b>WebDAV 层</b>：协议实现细节</summary>
 
 方法：`OPTIONS` `PROPFIND` `PROPPATCH` `MKCOL` `GET` `HEAD` `PUT` `DELETE` `COPY` `MOVE` `LOCK` `UNLOCK`（`DAV: 1, 2`）。
 
@@ -159,7 +159,7 @@ npx tsc --noEmit     # 类型检查
 - `src/webdav.ts` 里每个偏离直觉的实现都写了"为什么"（RFC 条款 + 实测现象），改之前建议先读那段注释。
 
 <details>
-<summary><b>已知限制</b>：80 MB 打包上限、请求体 100/200 MB、advisory 锁、单目录 3000 项…</summary>
+<summary><b>已知限制</b>：平台上限与实现取舍</summary>
 
 - **打包 / 解压都在浏览器里完成**（JSZip，上限 80 MB），Worker 只负责搬字节 —— 超大目录请分次处理。
 - **单个目录最多列 3000 项**，超出会明确提示，未列出的部分需要用更具体的路径访问。
