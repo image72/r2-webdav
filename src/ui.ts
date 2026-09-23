@@ -5,7 +5,7 @@
  * 协议实现（PROPFIND/PUT/COPY…）全部留在 webdav.ts，两边互不引用。
  */
 
-import { is_os_metadata_key, listAll } from './r2';
+import { is_os_metadata_key, listDir } from './r2';
 
 export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
 
@@ -121,36 +121,42 @@ function display_name(object: R2Object, prefix: string): string {
 	return safe_decode(object.key.slice(prefix.length));
 }
 
-/** 列出目录的直接子项。目录本身以 `<collection />` 标记对象的形式存储。 */
-async function list_entries(bucket: R2Bucket, dir: string): Promise<BrowseEntry[]> {
+/**
+ * 列出目录的直接子项。目录本身以 `<collection />` 标记对象的形式存储，
+ * 也可以是"隐式目录"（只有子对象、没有标记对象），由 listDir 一并合成。
+ */
+async function list_entries(bucket: R2Bucket, dir: string): Promise<{ entries: BrowseEntry[]; truncated: boolean }> {
 	const prefix = dir === '' ? '' : `${dir}/`;
 	const entries: BrowseEntry[] = [];
+	const listing = await listDir(bucket, prefix);
 
-	for await (const object of listAll(bucket, prefix)) {
-		if (object.key === dir) {
+	for (const item of listing.entries) {
+		if (item.key === dir) {
 			continue;
 		}
 		// macOS 的影子文件不在界面上展示（上传层已经拦了，这里挡历史遗留的）
-		if (is_os_metadata_key(object.key)) {
+		if (is_os_metadata_key(item.key)) {
 			continue;
 		}
-		const isDir = object.customMetadata?.resourcetype === '<collection />';
-		const name = display_name(object, prefix);
+		const isDir = item.is_collection;
+		const relative = item.key.slice(prefix.length);
+		const name = item.object === null ? safe_decode(relative) : display_name(item.object, prefix);
 		entries.push({
 			name,
-			href: `/${object.key}${isDir ? '/' : ''}`,
+			href: `/${item.key}${isDir ? '/' : ''}`,
 			isDir,
 			kind: isDir ? null : preview_kind(name),
-			contentType: object.httpMetadata?.contentType ?? null,
-			size: object.size,
-			modified: object.uploaded.toISOString(),
+			contentType: item.object?.httpMetadata?.contentType ?? null,
+			size: item.object?.size ?? 0,
+			modified: item.object?.uploaded.toISOString() ?? '',
 		});
 	}
 
 	entries.sort((a, b) =>
 		a.isDir === b.isDir ? a.name.localeCompare(b.name, undefined, { numeric: true }) : a.isDir ? -1 : 1,
 	);
-	return entries;
+	// truncated 必须传给前端：以前静默截断在 3000 条，用户会以为目录里只有这些
+	return { entries, truncated: listing.truncated };
 }
 
 function directory_path(pathname: string): string {
@@ -165,8 +171,9 @@ export async function handle_browse_request(request: Request, bucket: R2Bucket):
 	if (url.searchParams.get('format') === 'json') {
 		const dir = directory_path(url.pathname);
 		const parent = dir === '' ? null : `/${dir.split('/').slice(0, -1).join('/')}${dir.includes('/') ? '/' : ''}`;
+		const listing = await list_entries(bucket, dir);
 		return Response.json(
-			{ path: dir, parent, entries: await list_entries(bucket, dir) },
+			{ path: dir, parent, entries: listing.entries, truncated: listing.truncated },
 			{ headers: { 'Cache-Control': 'no-store' } },
 		);
 	}
@@ -337,6 +344,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.state__icon .icon { width: 40px; height: 40px; }
 	.state__actions { display: flex; justify-content: center; padding-top: var(--sp-4); }
 	.state--error { color: var(--danger); }
+	.state--warn { color: #b45309; }
 
 	.btn {
 		display: inline-flex;
@@ -671,6 +679,11 @@ const PAGE_HTML = `<!DOCTYPE html>
 			</div>
 		</div>
 
+		<div class="state state--warn" x-show="!loading && !error && truncated" role="status">
+			<span class="state__icon"><svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg></span>
+			<p>目录成员过多，只列出前 3000 项；未列出的内容请用更具体的路径访问。</p>
+		</div>
+
 		<div class="state" x-show="!loading && !error && entries.length === 0">
 			<span class="state__icon"><svg class="icon" aria-hidden="true"><use href="#i-folder-open"></use></svg></span>
 			<p>这个目录还是空的</p>
@@ -845,6 +858,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 	window.browser = function () {
 		return {
 			entries: [],
+			truncated: false,
 			loading: true,
 			error: '',
 			busy: false,
@@ -880,6 +894,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 					const data = await response.json();
 					this.entries = data.entries;
+					this.truncated = data.truncated === true;
 				} catch (err) {
 					this.error = '目录加载失败：' + err.message;
 				} finally {

@@ -11,10 +11,19 @@ Cloudflare 官方文档 + 代码运算量推算（本地无法复现平台侧限
 | 批次 | 覆盖 ID | 状态 |
 |------|---------|------|
 | 1 | A1 A2 A5 A6 B1 B2 B7 C1 C2 C3 C4 C5 C7 C9 C10 C11 C14 D6 | **已修复**，回归 72/72 通过 |
-| 2 | A3 A4 B3 | 进行中 |
-| 3 | B10 | 待修复 |
+| 2 | A3 A4 B3 | **已修复**，回归 40/40 通过 |
+| 3 | B10 | 进行中 |
 | 4 | B4 B5 B8 C6 | 待修复 |
 | 5 | C12 C13 D2 D4 D7 | 待修复 |
+
+> **A3/A4 的残余限制（平台相关）**：修掉的是"静默"，不是"上限"。单次请求仍然最多枚举
+> `MAX_OBJECTS_PER_REQUEST`(3000) 个成员；现在超限会明确失败（COPY/MOVE → `507`，
+> PROPFIND → `<responsedescription>` + `X-WebDAV-Truncated: true`，网页界面 → 顶部警示条），
+> 而不是假装成功。真正的分页需要 WebDAV 之外的游标机制，见下方平台受限表。
+
+> **B3 的修法**：没有让 PUT 层层补建祖先目录（那会给每次深层 PUT 增加多次子请求），
+> 而是新增 `listDir()` 读取 R2 的 `delimitedPrefixes` —— 隐式目录在任意列表里都能出现，
+> 且 `resource_exists()` 让 PROPFIND / DELETE 也能识别它们。存量幻影目录因此一并被救活。
 
 > **A6 说明**：本地观察到的 `500` 是 Miniflare 的 R2 条件读取实现缺陷（错误页内容为
 > `Error get: Unspecified error (0)`），生产 R2 未必复现。但代码层面确实存在两处真实缺陷且已修：

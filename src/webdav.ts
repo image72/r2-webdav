@@ -11,7 +11,7 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-import { PERFORMANCE_CONFIG, is_os_metadata_key, listAll, processWithConcurrencyLimit } from './r2';
+import { PERFORMANCE_CONFIG, is_os_metadata_key, listDir, listRecursive, processWithConcurrencyLimit } from './r2';
 import { handle_browse_request } from './ui';
 
 type DavProperties = {
@@ -90,6 +90,51 @@ function escape_xml(value: string): string {
 /** 是否为集合（目录）。目录以 `customMetadata.resourcetype` 标记对象的形式存储。 */
 function is_collection(object: R2Object): boolean {
 	return object.customMetadata?.resourcetype === '<collection />';
+}
+
+/** 写入一个目录标记对象。 */
+async function put_collection_marker(bucket: R2Bucket, path: string): Promise<void> {
+	await bucket.put(path, new Uint8Array(), { customMetadata: { resourcetype: '<collection />' } });
+}
+
+/**
+ * 判断路径是否存在，并给出它是否是集合。不存在时返回 null。
+ *
+ * 没有标记对象时会再用一次 list 探测是否有以它为前缀的对象：否则"隐式目录"
+ * （由其它工具直接写入深层 key 造成）会被当成不存在 —— PROPFIND 回 404、
+ * DELETE 回 404，而它的子对象其实一直存在。
+ */
+async function resource_exists(
+	bucket: R2Bucket,
+	path: string,
+): Promise<{ object: R2Object | null; is_collection: boolean } | null> {
+	const object = await bucket.head(path);
+	if (object !== null) {
+		return { object: object, is_collection: is_collection(object) };
+	}
+	if (path === '') {
+		return null;
+	}
+	const probe = await bucket.list({ prefix: `${path}/`, limit: 1 });
+	if (probe.objects.length > 0) {
+		return { object: null, is_collection: true };
+	}
+	return null;
+}
+
+/**
+ * 成员数超出一单次可安全处理的规模时拒绝，而不是只处理一部分。
+ *
+ * 旧实现会静默地把 COPY/MOVE 截断在 3000 个成员，却照常回 201：客户端以为整体
+ * 成功，实际少了数据（MOVE 还会把剩下的留在源端变成不可见的孤儿）。507 是
+ * WebDAV 里表示"服务器存量不足/无法完成"的标准状态码。
+ */
+function too_many_members(path: string): Response {
+	return new Response(
+		`Too many members under /${path} (limit ${PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST}). ` +
+			'Refusing to process only part of it so that nothing is silently lost; split the collection and retry.',
+		{ status: 507 },
+	);
 }
 
 /**
@@ -332,13 +377,17 @@ async function handle_delete(request: Request, bucket: R2Bucket): Promise<Respon
 		return new Response('Refusing to delete the bucket root', { status: 403 });
 	}
 
-	let resource = await bucket.head(resource_path);
+	const resource = await resource_exists(bucket, resource_path);
 	if (resource === null) {
 		return new Response('Not Found', { status: 404 });
 	}
-	await bucket.delete(resource_path);
-	if (resource.customMetadata?.resourcetype !== '<collection />') {
+	if (!resource.is_collection) {
+		await bucket.delete(resource_path);
 		return new Response(null, { status: 204 });
+	}
+	// 隐式目录没有标记对象，delete() 无事可做；子对象由下面的 prefix 删除处理
+	if (resource.object !== null) {
+		await bucket.delete(resource_path);
 	}
 
 	// Batch delete collection contents with size limit
@@ -397,6 +446,26 @@ async function handle_mkcol(request: Request, bucket: R2Bucket): Promise<Respons
 	return new Response('', { status: 201 });
 }
 
+/**
+ * 隐式目录（没有标记对象，由其它工具直接写入深层 key 造成）的 <response>。
+ * href 必须带尾斜杠，否则客户端会把它当文件；属性用 fromR2Object(null) 合成。
+ */
+function generate_implicit_collection_response(key: string): string {
+	return `
+	<response>
+		<href>/${escape_xml(key)}/</href>
+		<propstat>
+			<prop>
+			${Object.entries(fromR2Object(null))
+				.filter(([, value]) => value !== undefined)
+				.map(([name, value]) => `<${name}>${value}</${name}>`)
+				.join('\n\t\t\t\t')}
+			</prop>
+			<status>HTTP/1.1 200 OK</status>
+		</propstat>
+	</response>`;
+}
+
 function generate_propfind_response(object: R2Object | null): string {
 	if (object === null) {
 		return `
@@ -434,51 +503,54 @@ function generate_propfind_response(object: R2Object | null): string {
 async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Response> {
 	let resource_path = make_resource_path(request);
 
-	let is_collection: boolean;
+	let target_is_collection: boolean;
+	let truncated = false;
 	let page = `<?xml version="1.0" encoding="utf-8"?>
 <multistatus xmlns="DAV:">`;
 
 	if (resource_path === '') {
 		page += generate_propfind_response(null);
-		is_collection = true;
+		target_is_collection = true;
 	} else {
-		let object = await bucket.head(resource_path);
-		if (object === null) {
+		const resource = await resource_exists(bucket, resource_path);
+		if (resource === null) {
 			return new Response('Not Found', { status: 404 });
 		}
-		is_collection = object.customMetadata?.resourcetype === '<collection />';
-		page += generate_propfind_response(object);
+		target_is_collection = resource.is_collection;
+		// 隐式目录也要给出带尾斜杠的 href，否则客户端会把它当文件
+		page +=
+			resource.object === null
+				? generate_implicit_collection_response(resource_path)
+				: generate_propfind_response(resource.object);
 	}
 
-	if (is_collection) {
+	if (target_is_collection) {
 		let depth = request.headers.get('Depth') ?? 'infinity';
+		const prefix = resource_path === '' ? resource_path : resource_path + '/';
 		switch (depth) {
 			case '0':
 				break;
-			case '1':
-				{
-					let prefix = resource_path === '' ? resource_path : resource_path + '/';
-					for await (let object of listAll(bucket, prefix)) {
-						if (is_os_metadata_key(object.key)) continue; // 历史遗留的影子文件也不暴露给客户端
-						page += generate_propfind_response(object);
-					}
+			case '1': {
+				const listing = await listDir(bucket, prefix);
+				for (const entry of listing.entries) {
+					if (is_os_metadata_key(entry.key)) continue; // 历史遗留的影子文件也不暴露给客户端
+					page +=
+						entry.object === null
+							? generate_implicit_collection_response(entry.key)
+							: generate_propfind_response(entry.object);
 				}
+				truncated = listing.truncated;
 				break;
-			case 'infinity':
-				{
-					// Limit infinity depth for performance
-					let prefix = resource_path === '' ? resource_path : resource_path + '/';
-					let objectCount = 0;
-					for await (let object of listAll(bucket, prefix, true, PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST)) {
-						if (objectCount >= PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST) {
-							break; // Prevent excessive processing
-						}
-						if (is_os_metadata_key(object.key)) continue;
-						page += generate_propfind_response(object);
-						objectCount++;
-					}
+			}
+			case 'infinity': {
+				const listing = await listRecursive(bucket, prefix);
+				for (const object of listing.objects) {
+					if (is_os_metadata_key(object.key)) continue;
+					page += generate_propfind_response(object);
 				}
+				truncated = listing.truncated;
 				break;
+			}
 			default: {
 				// RFC 4918 §10.2：Depth 不是 0/1/infinity 时要求回 400（旧实现回 403）
 				return new Response('Bad Request', { status: 400 });
@@ -486,11 +558,19 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 		}
 	}
 
+	// 截断必须显式暴露：WebDAV 没有分页游标，客户端拿不到超限以后的条目，
+	// 静默截断会让它以为目录里只有这些内容。<responsedescription> 是 RFC 4918 里的
+	// 合法元素，再额外给一个响应头方便脚本与运维检测。
+	if (truncated) {
+		page += `\n<responsedescription>Listing truncated at ${PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST} entries; this collection has more members than can be enumerated in a single response.</responsedescription>`;
+	}
+
 	page += '\n</multistatus>\n';
 	return new Response(page, {
 		status: 207,
 		headers: {
 			'Content-Type': 'text/xml',
+			...(truncated ? { 'X-WebDAV-Truncated': 'true' } : {}),
 		},
 	});
 }
@@ -628,17 +708,33 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 	}
 
 	// Check if the destination already exists
-	let destination_exists = await bucket.head(destination);
+	const destination_exists = (await resource_exists(bucket, destination)) !== null;
 	if (dont_overwrite && destination_exists) {
 		return new Response('Precondition Failed', { status: 412 });
 	}
 
-	let resource = await bucket.head(resource_path);
+	const resource = await resource_exists(bucket, resource_path);
 	if (resource === null) {
 		return new Response('Not Found', { status: 404 });
 	}
+	if (resource_path === destination) {
+		return new Response('Bad Request', { status: 400 });
+	}
 
-	let is_dir = resource?.customMetadata?.resourcetype === '<collection />';
+	const done = () => (destination_exists ? new Response(null, { status: 204 }) : new Response('', { status: 201 }));
+
+	// 成员数超限时必须在**任何写操作之前**失败：旧实现只处理前 3000 个成员却照常回 201，
+	// 客户端以为整体成功，实际少了数据。
+	let members: R2Object[] | null = null;
+	if (resource.is_collection && (request.headers.get('Depth') ?? 'infinity') === 'infinity') {
+		const listing = await listRecursive(bucket, resource_path + '/');
+		if (listing.truncated) {
+			return too_many_members(resource_path);
+		}
+		members = listing.objects;
+	}
+
+	const is_dir = resource.is_collection;
 
 	if (is_dir) {
 		let depth = request.headers.get('Depth') ?? 'infinity';
@@ -658,25 +754,24 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 					}
 				};
 
-				// Copy root resource first
-				await copy(resource);
-
-				// Process child objects with concurrency limit
-				const childObjects: R2Object[] = [];
-				for await (let object of listAll(bucket, prefix, true)) {
-					childObjects.push(object);
-				}
-
-				await processWithConcurrencyLimit(childObjects, copy);
-
-				if (destination_exists) {
-					return new Response(null, { status: 204 });
+				// 集合自身：隐式目录没有标记对象，直接在目标位置补一个
+				if (resource.object === null) {
+					await put_collection_marker(bucket, destination);
 				} else {
-					return new Response('', { status: 201 });
+					await copy(resource.object);
 				}
+
+				await processWithConcurrencyLimit(members ?? [], copy);
+
+				return done();
 			}
 			case '0': {
-				let object = await bucket.get(resource.key);
+				// RFC 4918 §9.8.3：Depth: 0 只复制集合本身，不含成员
+				if (resource.object === null) {
+					await put_collection_marker(bucket, destination);
+					return done();
+				}
+				let object = await bucket.get(resource.object.key);
 				if (object === null) {
 					return new Response('Not Found', { status: 404 });
 				}
@@ -684,18 +779,18 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 					httpMetadata: object.httpMetadata,
 					customMetadata: object.customMetadata,
 				});
-				if (destination_exists) {
-					return new Response(null, { status: 204 });
-				} else {
-					return new Response('', { status: 201 });
-				}
+				return done();
 			}
 			default: {
 				return new Response('Bad Request', { status: 400 });
 			}
 		}
 	} else {
-		let src = await bucket.get(resource.key);
+		const source_object = resource.object;
+		if (source_object === null) {
+			return new Response('Not Found', { status: 404 });
+		}
+		let src = await bucket.get(source_object.key);
 		if (src === null) {
 			return new Response('Not Found', { status: 404 });
 		}
@@ -703,11 +798,7 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 			httpMetadata: src.httpMetadata,
 			customMetadata: src.customMetadata,
 		});
-		if (destination_exists) {
-			return new Response(null, { status: 204 });
-		} else {
-			return new Response('', { status: 201 });
-		}
+		return done();
 	}
 }
 
@@ -731,17 +822,38 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 	}
 
 	// Check if the destination already exists
-	let destination_exists = await bucket.head(destination);
+	const destination_exists = (await resource_exists(bucket, destination)) !== null;
 	if (!overwrite && destination_exists) {
 		return new Response('Precondition Failed', { status: 412 });
 	}
 
-	let resource = await bucket.head(resource_path);
+	const resource = await resource_exists(bucket, resource_path);
 	if (resource === null) {
 		return new Response('Not Found', { status: 404 });
 	}
-	if (resource.key === destination) {
+	if (resource_path === destination) {
 		return new Response('Bad Request', { status: 400 });
+	}
+
+	const done = () => (destination_exists ? new Response(null, { status: 204 }) : new Response('', { status: 201 }));
+
+	const depth = request.headers.get('Depth') ?? 'infinity';
+	// RFC 4918 §9.9.3：集合的 MOVE 只允许 Depth: infinity。旧实现在 Depth: 0 时只搬走
+	// 目录标记对象，子对象全部留在原 prefix 下 —— 那批对象随后既不出现在任何列表里，
+	// 也无法用原来的路径删除，只能按完整 key 或整桶操作才能到达。
+	if (resource.is_collection && depth !== 'infinity') {
+		return new Response('Depth must be infinity for MOVE on a collection', { status: 400 });
+	}
+
+	// 成员数超限时必须在**任何写操作之前**失败：MOVE 会先删掉目标再逐个搬，
+	// 若中途才发现成员过多，就会留下"目标已删、源端只剩一部分"的半成品状态。
+	let members: R2Object[] | null = null;
+	if (resource.is_collection) {
+		const listing = await listRecursive(bucket, resource_path + '/');
+		if (listing.truncated) {
+			return too_many_members(resource_path);
+		}
+		members = listing.objects;
 	}
 
 	if (destination_exists) {
@@ -749,16 +861,9 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 		await handle_delete(new Request(new URL(`/${destination}`, request.url), request), bucket);
 	}
 
-	let is_dir = resource?.customMetadata?.resourcetype === '<collection />';
+	const is_dir = resource.is_collection;
 
 	if (is_dir) {
-		let depth = request.headers.get('Depth') ?? 'infinity';
-		// RFC 4918 §9.9.3：集合的 MOVE 只允许 Depth: infinity。旧实现在 Depth: 0 时只搬走
-		// 目录标记对象，子对象全部留在原 prefix 下 —— 那批对象随后既不出现在任何列表里，
-		// 也无法用原来的路径删除，只能按完整 key 或整桶操作才能到达。
-		if (depth === '0') {
-			return new Response('Depth must be infinity for MOVE on a collection', { status: 400 });
-		}
 		switch (depth) {
 			case 'infinity': {
 				let prefix = resource_path + '/';
@@ -780,25 +885,23 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 					}
 				};
 
-				// Move root resource first
-				await move(resource);
-
-				// Process child objects with concurrency limit
-				const childObjects: R2Object[] = [];
-				for await (let object of listAll(bucket, prefix, true)) {
-					childObjects.push(object);
+				// 集合自身：目标端补一个标记对象，源端标记对象删掉（隐式目录本来就没有）
+				await put_collection_marker(bucket, destination);
+				if (resource.object !== null) {
+					await bucket.delete(resource.object.key);
 				}
 
-				await processWithConcurrencyLimit(childObjects, move);
+				await processWithConcurrencyLimit(members ?? [], move);
 
-				if (destination_exists) {
-					return new Response(null, { status: 204 });
-				} else {
-					return new Response('', { status: 201 });
-				}
+				return done();
 			}
 			case '0': {
-				let object = await bucket.get(resource.key);
+				// 上面已保证集合的 Depth 只能是 infinity，所以这里一定是文件
+				const source_object = resource.object;
+				if (source_object === null) {
+					return new Response('Not Found', { status: 404 });
+				}
+				const object = await bucket.get(source_object.key);
 				if (object === null) {
 					return new Response('Not Found', { status: 404 });
 				}
@@ -806,19 +909,19 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 					httpMetadata: object.httpMetadata,
 					customMetadata: object.customMetadata,
 				});
-				await bucket.delete(resource.key);
-				if (destination_exists) {
-					return new Response(null, { status: 204 });
-				} else {
-					return new Response('', { status: 201 });
-				}
+				await bucket.delete(source_object.key);
+				return done();
 			}
 			default: {
 				return new Response('Bad Request', { status: 400 });
 			}
 		}
 	} else {
-		let src = await bucket.get(resource.key);
+		const source_object = resource.object;
+		if (source_object === null) {
+			return new Response('Not Found', { status: 404 });
+		}
+		const src = await bucket.get(source_object.key);
 		if (src === null) {
 			return new Response('Not Found', { status: 404 });
 		}
@@ -826,12 +929,8 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 			httpMetadata: src.httpMetadata,
 			customMetadata: src.customMetadata,
 		});
-		await bucket.delete(resource.key);
-		if (destination_exists) {
-			return new Response(null, { status: 204 });
-		} else {
-			return new Response('', { status: 201 });
-		}
+		await bucket.delete(source_object.key);
+		return done();
 	}
 }
 
