@@ -1207,9 +1207,9 @@
 						id="entry-download-link"
 						class="sheet__item"
 						:href="sheet?.href"
-						:download="sheet?.name"
+						:download="sheet?.isDir ? sheet?.name + '.zip' : sheet?.name"
 						@click="downloadEntry(sheet, $event)"
-						aria-label="Download"
+						:aria-label="sheet?.isDir ? 'Download as ZIP' : 'Download'"
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
 					</a>
@@ -1492,6 +1492,24 @@
 		</div>
 
 		<script>
+			/**
+			 * 浏览器内打包的字节上限。
+			 *
+			 * JSZip 会把每个条目一直留在内存里，直到 generateAsync 结束，所以峰值内存大致等于
+			 * 目录总大小。没有上限的话，一个几百 MB 的目录能把标签页拖死（而不是报错）。
+			 * 超过就明确拒绝，让用户去打包子目录。
+			 */
+			const ZIP_BYTE_LIMIT = 256 * 1024 * 1024;
+
+			/**
+			 * 去掉 href 里的 `scheme://authority`，只留路径（RFC 4918 允许 href 是绝对 URI）。
+			 *
+			 * 刻意**不用 `new URL()`**：URL 解析器会把 `.` / `..` / `%2E%2E` 这些路径段
+			 * 折叠掉，一个名字带 `..` 的对象会在比较前缀时就被悄悄丢掉，打包结果少了东西
+			 * 而用户完全看不出来。自己切前缀，这种名字才能落到下面那道检查上被明确拒绝。
+			 */
+			const strip_origin = (href) => href.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, '');
+
 			window.browser = function () {
 				return {
 					entries: [],
@@ -1499,6 +1517,8 @@
 					loading: true,
 					error: '',
 					busy: false,
+					// 目录打包期间为 true。整个流程在浏览器里跑，这个标志只用来挡住重入
+					zipping: false,
 					dragging: false,
 					toast: '',
 					sheet: null,
@@ -1721,6 +1741,82 @@
 						await this.loadScript('https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js');
 					},
 
+					/** 惰性加载 JSZip：和 markdown-it / mermaid 同理，真的用到才拉，不给首屏加负担。 */
+					async loadJSZip() {
+						await this.loadScript('https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js');
+						if (!window.JSZip) throw new Error('JSZip 加载失败');
+						return window.JSZip;
+					},
+
+					/**
+					 * 取一棵子树的清单，供打包使用。
+					 *
+					 * 用 `Depth: infinity` 的 PROPFIND —— 服务端已有的实现，一个请求就能拿到整个层级；
+					 * 而且它已经过滤掉 `._*` 影子文件，与列表页看到的保持一致，不用客户端再筛一遍。
+					 *
+					 * 解析用 getElementsByTagNameNS（按「命名空间 + 本地名」匹配）而不是 querySelector，
+					 * 这样服务端把前缀从默认命名空间换成 D: 也照样能解析。
+					 */
+					async fetchTree(href) {
+						const response = await fetch(href, {
+							method: 'PROPFIND',
+							credentials: 'include',
+							headers: { Depth: 'infinity', 'Content-Type': 'application/xml' },
+							body: '<?xml version="1.0"?><propfind xmlns="DAV:"><prop><resourcetype/><getcontentlength/></prop></propfind>',
+						});
+						if (response.status !== 207) throw new Error('目录读取失败：' + response.status);
+
+						// 服务端对象数超限时只返回一部分。静默少内容比直接失败糟得多：用户会以为
+						// 备份完整，然后删掉原件。宁可拒绝也不产出一个不完整的 zip。
+						if (response.headers.get('x-webdav-truncated') === 'true') {
+							throw new Error('目录成员过多，服务端只能返回一部分清单，请分别打包子目录');
+						}
+
+						const doc = new DOMParser().parseFromString(await response.text(), 'application/xml');
+						if (!doc.documentElement || doc.documentElement.localName !== 'multistatus') {
+							throw new Error('目录清单解析失败');
+						}
+
+						const base = strip_origin(href).replace(/\/?$/, '/');
+						const dirs = [];
+						const files = [];
+						for (const item of doc.getElementsByTagNameNS('DAV:', 'response')) {
+							const node = item.getElementsByTagNameNS('DAV:', 'href')[0];
+							if (!node) continue;
+							const path = strip_origin(node.textContent.trim());
+							// 以目录前缀（带斜杠）匹配：`/sub/` 不会误收 `/sub-x/`
+							if (!path.startsWith(base)) continue;
+
+							// 目录自己那一条（href 就是 base）没有后缀
+							const tail = path.slice(base.length).replace(/\/+$/, '');
+							if (!tail) continue;
+
+							let relative;
+							try {
+								relative = decodeURIComponent(tail);
+							} catch {
+								// 名字解不出来就没法给它一个条目名。宁可整个失败，也不能少放一个文件
+								// 还告诉用户「已打包」—— 用户可能就此拿这个 zip 当备份。
+								throw new Error('目录清单里有无法解码的名字（' + tail + '），拒绝打包');
+							}
+
+							// R2 的 key 是任意字符串，能包含 `..`。带着它生成 zip 等于把
+							// 「解压时写到目标目录之外」的路径写进文件里，不赌解压工具会消毒。
+							if (relative.split('/').includes('..')) {
+								throw new Error('目录里有名字含 .. 的对象（' + relative + '），拒绝打包');
+							}
+
+							if (item.getElementsByTagNameNS('DAV:', 'collection').length > 0) {
+								dirs.push(relative);
+								continue;
+							}
+							const raw = item.getElementsByTagNameNS('DAV:', 'getcontentlength')[0]?.textContent;
+							const size = Number(raw ?? 0);
+							files.push({ path: relative, href: path, size: Number.isFinite(size) ? size : 0 });
+						}
+						return { dirs, files };
+					},
+
 					// markdown-it 会把 mermaid 代码块渲染成 <pre><code>，这里换成 mermaid 节点再绘制。
 					async renderMermaid() {
 						if (!window.mermaid) return;
@@ -1940,12 +2036,77 @@
 					async downloadEntry(entry, event) {
 						event.preventDefault();
 						await this.settleRename();
+						if (entry.isDir) return this.zipFolder(entry);
 						const link = document.createElement('a');
 						link.href = entry.href;
 						link.download = entry.name;
 						document.body.appendChild(link);
 						link.click();
 						link.remove();
+					},
+
+					/**
+					 * 目录打包下载。
+					 *
+					 * 整个流程都在浏览器里跑，**完全不经过 Worker**：目录树用一个 PROPFIND 拿，
+					 * 文件内容逐个 GET，再交给 JSZip 组装成 blob。所以不需要新增服务端接口 ——
+					 * 服务端本来就已经支持 Depth: infinity 的递归列举。
+					 */
+					async zipFolder(entry) {
+						if (this.zipping) return;
+						this.zipping = true;
+						try {
+							this.notifySticky('正在读取目录…');
+							const tree = await this.fetchTree(entry.href);
+
+							const total = tree.files.reduce((sum, file) => sum + file.size, 0);
+							if (total > ZIP_BYTE_LIMIT) {
+								throw new Error(
+									'共 ' + this.formatSize(total) + '，超过 ' + this.formatSize(ZIP_BYTE_LIMIT) + ' 的浏览器内打包上限',
+								);
+							}
+
+							const JSZip = await this.loadJSZip();
+							const zip = new JSZip();
+							// 和 Finder 的「压缩」一致：zip 里保留目录本身这一层
+							const root = zip.folder(entry.name);
+							// 空目录不会因为子文件而自动出现，必须显式写一条，否则空目录会被静默丢掉
+							for (const dir of tree.dirs) root.folder(dir);
+
+							let done = 0;
+							for (const file of tree.files) {
+								// 一次只下一个：进度干净，峰值内存也最低（反正 JSZip 都会留着）
+								done++;
+								this.notifySticky('打包中 ' + done + '/' + tree.files.length + '…');
+								const response = await fetch(file.href, { credentials: 'include' });
+								if (!response.ok) throw new Error(file.path + ' 读取失败：' + response.status);
+								root.file(file.path, await response.blob());
+							}
+
+							this.notifySticky('正在生成 zip…');
+							// streamFiles 保持默认的 false：置 true 虽然省内存，但条目会用「数据描述符」
+							// 写在末尾，部分解压工具（尤其 Windows 资源管理器）不接受这种 zip。
+							const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, (meta) => {
+								this.notifySticky('正在生成 zip… ' + Math.round(meta.percent) + '%');
+							});
+
+							const url = URL.createObjectURL(blob);
+							const link = document.createElement('a');
+							link.href = url;
+							link.download = entry.name + '.zip';
+							document.body.appendChild(link);
+							link.click();
+							link.remove();
+							// blob URL 会一直钉住整个 zip 占的内存，直到页面关闭或显式回收。
+							// 给下载留足启动时间再回收（立即回收会打断尚未开始的下载）。
+							setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+							this.notify('已打包 ' + tree.files.length + ' 个文件');
+						} catch (err) {
+							this.notify('打包失败：' + err.message);
+						} finally {
+							this.zipping = false;
+						}
 					},
 
 					/** 新名称校验（文件名 / 目录名共用，保证两处规则一致）。 */
@@ -2179,6 +2340,17 @@
 						const files = this.uploadConflicts || [];
 						this.uploadConflicts = null;
 						await this.upload(files, { overwrite: true });
+					},
+
+					/**
+					 * 常驻提示：给打包这类长操作推进度用。
+					 *
+					 * 不能直接复用 notify()，它有 2.4s 自动消失的定时器 —— 打包跑到一半提示就没了。
+					 * 这里先把定时器清掉，等操作结束再交给 notify() 收尾。
+					 */
+					notifySticky(message) {
+						clearTimeout(this.toastTimer);
+						this.toast = message;
 					},
 
 					notify(message) {
