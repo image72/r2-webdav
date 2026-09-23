@@ -771,7 +771,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			<label class="editor__field">
 				<span class="editor__label">目录名</span>
 				<input id="folder-name-input" class="editor__input" type="text" x-model="folder.name"
-					@keydown.enter.prevent="createFolder()" aria-label="Folder name" placeholder="新建文件夹"
+					@keydown.enter.prevent="createFolder()" aria-label="Folder name" placeholder="new-folder"
 					autocomplete="off" autocapitalize="off" spellcheck="false">
 			</label>
 			<p class="editor__error" x-show="folder.error" x-text="folder.error"></p>
@@ -1153,15 +1153,19 @@ const PAGE_HTML = `<!DOCTYPE html>
 			 *
 			 * 和 default_new_name() 同理：不能用固定名，否则第二次新建就必定撞名，
 			 * 而 MKCOL 撞名只会得到一个 405，用户看到的是一句没头没脑的报错。
+			 *
+			 * 用英文而不是中文名：目录名会直接进 URL，中文会被百分号编码成一大串
+			 * %E6%96%B0... ，既难读也难与别人对若。文本文件的默认名本来也是英文
+			 * （untitled.txt），两边风格正好一致。
 			 */
 			default_folder_name() {
 				const taken = new Set(this.entries.map((entry) => entry.name));
-				if (!taken.has('新建文件夹')) return '新建文件夹';
+				if (!taken.has('new-folder')) return 'new-folder';
 				for (let index = 2; index < 1000; index++) {
-					const candidate = '新建文件夹-' + index;
+					const candidate = 'new-folder-' + index;
 					if (!taken.has(candidate)) return candidate;
 				}
-				return '新建文件夹';
+				return 'new-folder';
 			},
 
 			/**
