@@ -67,6 +67,27 @@
 				outline: 2px solid var(--accent);
 				outline-offset: 2px;
 			}
+			/*
+			 * 按钮 / 动作项一律禁止选中文字。
+			 *
+			 * 手机上按住 500ms 会触发系统的选中与取词，蓝色高亮直接压在按钮文字上 —— 它和
+			 * 「长按弹出操作面板」是同时发生的，看着像界面坏了。这些元素都是按一下就执行的，
+			 * 本来也没有需要复制的文字。
+			 *
+			 * 只挑「动作」元素，别图省事写成 `a` 或整个面板：
+			 *  - markdown 预览里的 <a> 是正文的一部分，禁掉会让整段选中时跳过链接文字；
+			 *  - input / textarea / 预览正文必须保持可选中（改名就是要进去改字的）。
+			 * 提示条文字也不禁 —— 复制链接失败时那条 URL 就是让用户自己选中拷的。
+			 */
+			button,
+			.crumb,
+			.icon-btn,
+			.sheet__item,
+			.sheet__title {
+				-webkit-touch-callout: none;
+				-webkit-user-select: none;
+				user-select: none;
+			}
 			/* 内联 SVG 图标统一尺寸与配色（fill 继承 currentColor） */
 			.icon {
 				display: block;
@@ -844,12 +865,17 @@
 				/* 提示文字 + （归档进行中才有的）取消按钮 */
 				display: flex;
 				align-items: center;
-				gap: var(--sp-3);
-				padding: var(--sp-3) var(--sp-4);
+				/*
+				 * 尺寸刻意压着：提示条是浮在内容上的，宽度和高度都直接从可视区里吃掉一块
+				 * （手机上曾经是 90vw × 68px，很显眼）。字号降一级、内边距各收一档。
+				 * 高度主要由取消按钮的 44px 撑起（触控目标不缩），想再薄只能缩按钮。
+				 */
+				gap: var(--sp-2);
+				padding: var(--sp-2) var(--sp-3);
 				border-radius: var(--r-md);
 				background: var(--ink);
 				color: #fff;
-				font-size: 14px;
+				font-size: 13px;
 				box-shadow: 0 8px 24px rgba(15, 23, 42, 0.24);
 			}
 
@@ -860,11 +886,11 @@
 			 * 盒子就跟着伸缩，两个边一起往外跑。实测同一屏宽下，从「链接已复制」到一条带长文件名的
 			 * 上传进度，左边缘能横移 126px：看着就是提示条在左右乱晃。
 			 *
-			 * 进度态里把宽度钉死，只换文字。420px 与桌面端面板（min(420px, 92vw)）同宽，
-			 * 90vw 这个上限与上面的 max-width 保持一致。
+			 * 进度态里把宽度钉死，只换文字。320px 是「够放一条进度 + 不那么占屏」的取中：
+			 * 比桌面端面板（min(420px, 92vw)）窄得多，实测最长的归档文案也放得下。
 			 */
 			.toast--progress {
-				width: min(420px, 90vw);
+				width: min(320px, 90vw);
 			}
 			/*
 			 * 定宽之后文字得自己收着：长文件名会换行，盒子又开始上下跳，还会把「取消」挤走。
