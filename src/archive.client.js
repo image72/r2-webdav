@@ -29,6 +29,15 @@
 	 */
 	const ZIP_BYTE_LIMIT = 256 * 1024 * 1024;
 
+	/**
+	 * 同时进行的请求数上限。
+	 *
+	 * 串行等每一个请求是两个方向的主要成本（打包是 N 次 GET，解压是 N 次 PUT）。
+	 * 不能无上限：WebDAV 那层一次调用最多 6 个同时连接，而且并发数直接放大峰值内存
+	 * （每个在途的请求体都占着一份）。4 是给两者都留了余量的取值。
+	 */
+	const CONCURRENCY = 4;
+
 	const PROPFIND_BODY =
 		'<?xml version="1.0"?><propfind xmlns="DAV:"><prop><resourcetype/><getcontentlength/></prop></propfind>';
 
@@ -70,6 +79,74 @@
 			unit++;
 		}
 		return (unit === 0 ? value : value.toFixed(1)) + ' ' + units[unit];
+	}
+
+	/** 把 zip 里的路径编成 URL 路径：逐段编码，`/` 保留为分隔符。 */
+	const encode_path = (path) => path.split('/').map(encodeURIComponent).join('/');
+
+	/**
+	 * 有界并发。
+	 *
+	 * 一个任务失败后不再取新任务，但要等**在途的**任务都收尾再抛错 —— 调用方失败后会
+	 * 立刻开始清理（DELETE），如果此时还有 PUT 在路上，它们会把内容又写回去，
+	 * 于是“清干净了”变成假象。
+	 */
+	async function map_concurrent(items, limit, worker) {
+		let next = 0;
+		let failure = null;
+		const runner = async () => {
+			while (failure === null && next < items.length) {
+				const index = next++;
+				try {
+					await worker(items[index], index);
+				} catch (err) {
+					if (failure === null) failure = err;
+				}
+			}
+		};
+		const runners = [];
+		for (let i = 0; i < Math.min(limit, items.length); i++) runners.push(runner());
+		await Promise.all(runners);
+		if (failure !== null) throw failure;
+	}
+
+	/** MKCOL。已存在会得到 405 —— 调用方自己保证不重复建。 */
+	async function mkcol(url, signal) {
+		const response = await fetch(url, { method: 'MKCOL', credentials: 'include', signal });
+		if (!response.ok) throw new Error(url + ' 建目录失败：' + response.status);
+	}
+
+	/** PUT 一个对象。 */
+	async function put_object(url, body, signal) {
+		const response = await fetch(url, {
+			method: 'PUT',
+			credentials: 'include',
+			signal,
+			// If-None-Match 与上传路径一致：目标目录是刚建的，真出现 412 说明有别的客户端
+			// 在同时写，如实报错而不是默默覆盖。
+			headers: {
+				'Content-Type': body.type || 'application/octet-stream',
+				'If-None-Match': '*',
+			},
+			body,
+		});
+		if (response.status === 412) throw new Error(url + ' 已存在（有其它客户端在同时写入）');
+		if (!response.ok) throw new Error(url + ' 写入失败：' + response.status);
+	}
+
+	/**
+	 * 删除一个目录（递归）。
+	 *
+	 * 刻意**不接受 signal**：调用它时操作已经失败了，若是用户取消，signal 已经 abort，
+	 * 把 abort 传上去会让这条清理请求立刻失败，半成品目录就留在那儿了。
+	 */
+	async function delete_tree(url) {
+		try {
+			const response = await fetch(url, { method: 'DELETE', credentials: 'include' });
+			return response.ok;
+		} catch {
+			return false;
+		}
 	}
 
 	/**
@@ -183,14 +260,14 @@
 		for (const dir of tree.dirs) root.folder(dir);
 
 		let done = 0;
-		for (const file of tree.files) {
-			// 一次只下一个：进度干净，峰值内存也最低（反正 JSZip 都会留着）
-			done++;
-			onProgress('打包中 ' + done + '/' + tree.files.length + '…');
+		await map_concurrent(tree.files, CONCURRENCY, async (file) => {
 			const response = await fetch(file.href, { credentials: 'include', signal });
 			if (!response.ok) throw new Error(file.path + ' 读取失败：' + response.status);
+			// zip.file() 是同步的且与顺序无关，所以下载可以并发，哪个先到先写
 			root.file(file.path, await response.blob());
-		}
+			done++;
+			onProgress('打包中 ' + done + '/' + tree.files.length + '…');
+		});
 
 		onProgress('正在生成 zip…');
 		// streamFiles 保持默认的 false：置 true 虽然省内存，但条目会用「数据描述符」写在末尾，
@@ -203,8 +280,148 @@
 		return { files: tree.files.length };
 	}
 
+	/**
+	 * 把一个 zip 解压到与它同名的目录里。
+	 *
+	 * 目标目录**必须不存在**。解压是多次请求、非原子的：写到一半失败会留下一个看着完整、
+	 * 其实缺文件的目录，而用户很可能就拿它当备份 —— 这正是整个项目最想避免的那类状态。
+	 * 所以宁可拒绝，也不往一个已有目录里合并。中途失败会把刚建的目录整个删掉。
+	 *
+	 * @param {{ name: string, href: string, size: number }} entry
+	 * @param {{ onProgress?: (text: string) => void, signal?: AbortSignal }} hooks
+	 * @returns {Promise<{ files: number, dirs: number }>}
+	 */
+	async function extract_zip_to_folder(entry, hooks) {
+		const onProgress = (hooks && hooks.onProgress) || function () {};
+		const signal = hooks && hooks.signal;
+
+		// 先用列表接口已有的公开信息挡掉超大压缩包，不必先下完再发现放不下
+		if (entry.size > ZIP_BYTE_LIMIT) {
+			throw new Error(
+				entry.name + ' 有 ' + format_size(entry.size) + '，超过 ' + format_size(ZIP_BYTE_LIMIT) + ' 的浏览器内解压上限',
+			);
+		}
+
+		const target = entry.href.replace(/\.zip$/i, '') + '/';
+		const base_name = entry.name.replace(/\.zip$/i, '');
+
+		onProgress('正在读取 ' + entry.name + '…');
+		const response = await fetch(entry.href, { credentials: 'include', signal });
+		if (!response.ok) throw new Error('读取失败：' + response.status);
+		const archive = await response.blob();
+
+		const JSZip = await load_jszip();
+		let zip;
+		try {
+			zip = await JSZip.loadAsync(archive);
+		} catch (err) {
+			throw new Error('不是有效的 zip 文件' + (err && err.message ? '（' + err.message + '）' : ''));
+		}
+
+		// 分类条目，并把父目录补全（有些工具不写目录条目，只写完整路径）
+		const dirs = new Set();
+		let files = [];
+		const add_dir = (path) => {
+			const parts = path.split('/').filter(Boolean);
+			let acc = '';
+			for (const part of parts) {
+				acc = acc ? acc + '/' + part : part;
+				dirs.add(acc);
+			}
+		};
+		for (const name of Object.keys(zip.files)) {
+			const item = zip.files[name];
+			// JSZip 自 v3.8.0 起会自己折叠 `..`（zip slip），但它是**静默**折叠的，而且
+			// 折叠后两个条目可能撞成同一个名字（互相覆盖 = 少内容）。所以这里主动拒绝。
+			const original = item.unsafeOriginalName || name;
+			if (original.split('/').includes('..')) {
+				throw new Error('内含路径穿越的条目（' + original + '），拒绝解压');
+			}
+			const clean = name.replace(/\/+$/, '');
+			if (!clean) continue;
+			if (item.dir) {
+				add_dir(clean);
+				continue;
+			}
+			// path 是解压后要写的路径，key 是它在 zip 里的键。剥掉共同顶层目录之后
+			// 两者就不一样了（roundtrip/a.txt → a.txt），所以必须分开存：
+			// 只存一个的话，剥过名字的条目会再也取不到内容（zip.files[path] 是 undefined）。
+			files.push({ path: clean, key: name });
+			add_dir(clean.split('/').slice(0, -1).join('/'));
+		}
+		if (files.length === 0 && dirs.size === 0) throw new Error('这个 zip 里没有任何条目');
+
+		// download_folder_as_zip 会保留目录本身这一层，所以原样展开会让 deep.zip 变成
+		// deep/deep/… —— 往返一次就多一层。当所有条目都落在唯一一个与 zip 同名的顶层目录下时
+		// 跳过这一层；只在名字对得上时这么做，不做更激进的猜测（那会改变本来的结构）。
+		const roots = new Set([...files.map((f) => f.path), ...dirs].map((path) => path.split('/')[0]));
+		if (files.every((f) => f.path.includes('/')) && roots.size === 1 && roots.has(base_name)) {
+			const strip = (path) => path.split('/').slice(1).join('/');
+			files = files.map((f) => ({ path: strip(f.path), key: f.key }));
+			const stripped = [];
+			for (const dir of dirs) {
+				const inner = strip(dir);
+				if (inner) stripped.push(inner);
+			}
+			dirs.clear();
+			for (const dir of stripped) dirs.add(dir);
+		}
+
+		// 目标不能已存在
+		const existing = await fetch(target, {
+			method: 'PROPFIND',
+			credentials: 'include',
+			signal,
+			headers: { Depth: '0', 'Content-Type': 'application/xml' },
+			body: PROPFIND_BODY,
+		});
+		if (existing.ok) {
+			const kind = (await existing.text()).includes('<collection />') ? '目录' : '文件';
+			throw new Error('已存在同名' + kind + ' ' + base_name + '，请先删除或改名');
+		}
+
+		onProgress('正在建目录…');
+		await mkcol(target, signal);
+		// 按深度分批：父目录必须先于子目录。先把目录全建完再传文件，避免 PUT 的自动补建父目录
+		// 与后面的 MKCOL 撞上（撞上得到的是 405）。
+		const by_depth = new Map();
+		for (const dir of dirs) {
+			const depth = dir.split('/').length;
+			if (!by_depth.has(depth)) by_depth.set(depth, []);
+			by_depth.get(depth).push(dir);
+		}
+		for (const depth of [...by_depth.keys()].sort((a, b) => a - b)) {
+			await map_concurrent(by_depth.get(depth), CONCURRENCY, (dir) => mkcol(target + encode_path(dir) + '/', signal));
+		}
+
+		try {
+			let done = 0;
+			let total = 0;
+			await map_concurrent(files, CONCURRENCY, async (file) => {
+				const content = await zip.files[file.key].async('blob');
+				// 累计上限防压缩炸弹：条目标称的大小不可信，只能边解边算。并发下最多超出
+				// CONCURRENCY 个条目的量，可以接受。
+				total += content.size;
+				if (total > ZIP_BYTE_LIMIT) {
+					throw new Error('解压后已超过 ' + format_size(ZIP_BYTE_LIMIT) + '，中止（可能是压缩炸弹）');
+				}
+				await put_object(target + encode_path(file.path), content, signal);
+				done++;
+				onProgress('解压中 ' + done + '/' + files.length + '…');
+			});
+		} catch (err) {
+			const cleaned = await delete_tree(target);
+			const suffix = cleaned ? '（已清掉不完整的目录）' : '（注意：' + base_name + '/ 里可能留有内容不完整的残留）';
+			if (signal && signal.aborted) throw new Error('已取消' + suffix);
+			throw new Error((err && err.message ? err.message : String(err)) + suffix);
+		}
+
+		return { files: files.length, dirs: dirs.size };
+	}
+
 	window.R2Archive = {
 		downloadFolderAsZip: download_folder_as_zip,
+		extractZipToFolder: extract_zip_to_folder,
 		ZIP_BYTE_LIMIT: ZIP_BYTE_LIMIT,
 	};
 })();

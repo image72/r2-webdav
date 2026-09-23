@@ -778,12 +778,33 @@
 				z-index: 80;
 				max-width: 90vw;
 				transform: translateX(-50%);
+				/* 提示文字 + （归档进行中才有的）取消按钮 */
+				display: flex;
+				align-items: center;
+				gap: var(--sp-3);
 				padding: var(--sp-3) var(--sp-4);
 				border-radius: var(--r-md);
 				background: var(--ink);
 				color: #fff;
 				font-size: 14px;
 				box-shadow: 0 8px 24px rgba(15, 23, 42, 0.24);
+			}
+
+			/* 深色底上的次级按钮；触控目标仍按约定做到 ≥ 44px */
+			.toast__cancel {
+				flex: none;
+				min-height: 44px;
+				padding: 0 var(--sp-3);
+				border: 0;
+				border-radius: var(--r-sm);
+				background: rgba(255, 255, 255, 0.16);
+				color: #fff;
+				font: inherit;
+				cursor: pointer;
+			}
+
+			.toast__cancel:hover {
+				background: rgba(255, 255, 255, 0.28);
 			}
 
 			@media (min-width: 640px) {
@@ -869,6 +890,11 @@
 			<symbol id="i-archive" viewBox="0 0 24 24">
 				<path
 					d="m20.54 5.23-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5 6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z"
+				/>
+			</symbol>
+			<symbol id="i-unarchive" viewBox="0 0 24 24">
+				<path
+					d="m20.55 5.22-1.39-1.68A1.51 1.51 0 0 0 18 3H6c-.47 0-.88.21-1.15.55L3.46 5.22C3.17 5.57 3 6.01 3 6.5V19a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V6.5c0-.49-.17-.93-.45-1.28zM12 9.5l5.5 5.5H14v2h-4v-2H6.5L12 9.5zM5.12 5l.82-1h12l.93 1H5.12z"
 				/>
 			</symbol>
 			<symbol id="i-upload" viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z" /></symbol>
@@ -1213,6 +1239,15 @@
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
 					</a>
+					<button
+						id="entry-extract-button"
+						class="sheet__item"
+						x-show="canExtract(sheet)"
+						@click="extractEntry(sheet)"
+						aria-label="Extract"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-unarchive"></use></svg><span>解压</span>
+					</button>
 					<button id="entry-copy-link-button" class="sheet__item" @click="copyLink(sheet)" aria-label="Copy link">
 						<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg><span>复制链接</span>
 					</button>
@@ -1480,15 +1515,20 @@
 			<div id="dropzone" class="dropzone" x-show="dragging" x-transition.opacity aria-label="Drop files to upload">
 				松手即可上传到当前目录
 			</div>
-			<div
-				id="toast"
-				class="toast"
-				x-show="toast"
-				x-transition.opacity
-				x-text="toast"
-				role="status"
-				aria-live="polite"
-			></div>
+			<div id="toast" class="toast" x-show="toast" x-transition.opacity role="status" aria-live="polite">
+				<span x-text="toast"></span>
+				<!-- 打包 / 解压是多请求、非原子的长任务，必须给一个真的能停下来的出口。
+				     只在归档进行中出现，平时不影响提示条的宽度。 -->
+				<button
+					id="archive-cancel-button"
+					class="toast__cancel"
+					x-show="archiveAbort"
+					@click="cancelArchive()"
+					aria-label="Cancel"
+				>
+					取消
+				</button>
+			</div>
 		</div>
 
 		<script>
@@ -1501,8 +1541,9 @@
 					loading: true,
 					error: '',
 					busy: false,
-					// 目录打包期间为 true。整个流程在浏览器里跑，这个标志只用来挡住重入
-					zipping: false,
+					// 归档操作（打包 / 解压）进行中时持有 AbortController，否则为 null。
+					// 它既用来挡重入，也决定提示条上要不要出现「取消」——不需要额外的布尔标志。
+					archiveAbort: null,
 					dragging: false,
 					toast: '',
 					sheet: null,
@@ -1958,18 +1999,52 @@
 					 * 接到提示条上，并把结果报出来。
 					 */
 					async zipFolder(entry) {
-						if (this.zipping) return;
-						this.zipping = true;
-						try {
-							const result = await window.R2Archive.downloadFolderAsZip(entry, {
-								onProgress: (text) => this.notifySticky(text),
-							});
+						await this.runArchive('打包', async (signal, onProgress) => {
+							const result = await window.R2Archive.downloadFolderAsZip(entry, { onProgress, signal });
 							this.notify('已打包 ' + result.files + ' 个文件');
+						});
+					},
+
+					/** 只有 zip 能解压（JSZip 只认这一种格式）。 */
+					canExtract(entry) {
+						return !!entry && !entry.isDir && /\.zip$/i.test(entry.name);
+					},
+
+					/** 解压到同名目录。实现全在 `src/archive.client.js` 里。 */
+					async extractEntry(entry) {
+						// 改名还挂在半路时 href 已经过期，先等它落盘再放行
+						await this.settleRename();
+						this.sheet = null;
+						await this.runArchive('解压', async (signal, onProgress) => {
+							const result = await window.R2Archive.extractZipToFolder(entry, { onProgress, signal });
+							this.notify('已解压 ' + result.files + ' 个文件到 ' + entry.name.replace(/\.zip$/i, '') + '/');
+							await this.load();
+						});
+					},
+
+					/**
+					 * 归档操作的公共外壳：挡重入、把进度接到提示条上、结束时收掉 AbortController。
+					 *
+					 * 打包和解压都是「多请求、非原子」的长任务，所以两者都提供真能停下来的取消
+					 * （解压取消时模块会把已经写进去的半成品目录删掉）。
+					 */
+					async runArchive(label, task) {
+						if (this.archiveAbort) return;
+						const controller = new AbortController();
+						this.archiveAbort = controller;
+						try {
+							await task(controller.signal, (text) => this.notifySticky(text));
 						} catch (err) {
-							this.notify('打包失败：' + err.message);
+							// 用户主动取消不该被说成「失败」，原样把模块的说明（含清理结果）转出来
+							this.notify(controller.signal.aborted ? err.message : label + '失败：' + err.message);
 						} finally {
-							this.zipping = false;
+							this.archiveAbort = null;
 						}
+					},
+
+					/** 取消进行中的归档操作。 */
+					cancelArchive() {
+						if (this.archiveAbort) this.archiveAbort.abort();
 					},
 
 					/** 新名称校验（文件名 / 目录名共用，保证两处规则一致）。 */
