@@ -662,7 +662,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 	<header class="app-bar">
 		<h1 class="sr-only">R2 Storage</h1>
-		<nav class="crumbs" aria-label="路径" x-ref="crumbs">
+		<nav id="breadcrumbs" class="crumbs" aria-label="Breadcrumb path" x-ref="crumbs">
 			<template x-for="(crumb, index) in crumbs" :key="crumb.href">
 				<span class="crumbs__part">
 					<span class="crumb-sep" x-show="index > 0">/</span>
@@ -670,7 +670,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 				</span>
 			</template>
 		</nav>
-		<button class="icon-btn" @click="load()" :disabled="loading" title="刷新" aria-label="刷新">
+		<button id="refresh-button" class="icon-btn" @click="load()" :disabled="loading" title="刷新" aria-label="Refresh">
 			<svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
 		</button>
 	</header>
@@ -688,7 +688,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			<span class="state__icon"><svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg></span>
 			<p x-text="error"></p>
 			<div class="state__actions">
-				<button class="btn btn--ghost" @click="load()">重试</button>
+				<button id="retry-button" class="btn btn--ghost" @click="load()" aria-label="Retry">重试</button>
 			</div>
 		</div>
 
@@ -701,21 +701,23 @@ const PAGE_HTML = `<!DOCTYPE html>
 			<span class="state__icon"><svg class="icon" aria-hidden="true"><use href="#i-folder-open"></use></svg></span>
 			<p>这个目录还是空的</p>
 			<div class="state__actions">
-				<button class="btn btn--ghost" @click="pickerRef().click()">上传第一个文件</button>
+				<button id="upload-first-button" class="btn btn--ghost" @click="pickerRef().click()" aria-label="Upload a file">上传第一个文件</button>
 			</div>
 		</div>
 
-		<ul class="list" x-show="!loading && !error && entries.length > 0">
-			<template x-for="entry in entries" :key="entry.href">
-				<li class="row">
-					<button class="row__main" @click="open(entry)" :title="entry.name">
+		<ul id="entry-list" class="list" x-show="!loading && !error && entries.length > 0">
+			<template x-for="(entry, index) in entries" :key="entry.href">
+				<li class="row" :id="'entry-row-' + index" :data-entry-name="entry.name" :data-entry-dir="entry.isDir ? 'true' : 'false'">
+					<button class="row__main" :id="'entry-open-' + index" @click="open(entry)" :title="entry.name"
+						:aria-label="'Open ' + entry.name">
 						<span class="row__icon" :class="'row__icon--' + iconFor(entry)"><svg class="icon" aria-hidden="true"><use :href="'#i-' + iconFor(entry)"></use></svg></span>
 						<span class="row__text">
 							<span class="row__name" x-text="entry.name"></span>
 							<span class="row__meta" x-text="metaFor(entry)"></span>
 						</span>
 					</button>
-					<button class="icon-btn" @click="sheet = entry" :aria-label="'更多操作：' + entry.name">
+					<button class="icon-btn row__more" :id="'entry-more-' + index" @click="sheet = entry"
+						:aria-label="'Actions for ' + entry.name">
 						<svg class="icon" aria-hidden="true"><use href="#i-more"></use></svg>
 					</button>
 				</li>
@@ -723,65 +725,70 @@ const PAGE_HTML = `<!DOCTYPE html>
 		</ul>
 	</main>
 
-	<button class="fab" @click="newMenu = true">
+	<button id="new-button" class="fab" @click="newMenu = true" aria-label="New">
 		<svg class="icon" aria-hidden="true"><use href="#i-add"></use></svg><span>新建</span>
 	</button>
-	<input type="file" multiple x-ref="picker" @change="onPick($event)" aria-hidden="true" tabindex="-1"
-		style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+	<input id="file-input" class="file-input" type="file" multiple x-ref="picker" @change="onPick($event)"
+		aria-hidden="true" tabindex="-1" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
 
-	<div class="backdrop" :class="{ open: !!(sheet || confirmTarget || newMenu || editor.open || uploadConflicts) }"
+	<div id="backdrop" class="backdrop" aria-hidden="true"
+		:class="{ open: !!(sheet || confirmTarget || newMenu || editor.open || uploadConflicts) }"
 		@click="sheet = null; confirmTarget = null; newMenu = false; uploadConflicts = null"></div>
 
 	<template x-if="newMenu">
-		<div class="sheet open" role="dialog" aria-modal="true" aria-label="新建">
+		<div id="new-menu-panel" class="sheet sheet--new open" role="dialog" aria-modal="true" aria-label="New">
 			<span class="sheet__title">新建</span>
-			<button class="sheet__item" @click="newMenu = false; pickerRef().click()">
+			<button id="new-upload-button" class="sheet__item" @click="newMenu = false; pickerRef().click()"
+				aria-label="Upload files">
 				<svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg><span>上传文件</span>
 			</button>
-			<button class="sheet__item" @click="openEditor()">
+			<button id="new-text-button" class="sheet__item" @click="openEditor()" aria-label="New text file">
 				<svg class="icon" aria-hidden="true"><use href="#i-note-add"></use></svg><span>新建文本文件</span>
 			</button>
-			<button class="sheet__item sheet__item--muted" @click="newMenu = false">取消</button>
+			<button id="new-cancel-button" class="sheet__item sheet__item--muted" @click="newMenu = false" aria-label="Cancel">取消</button>
 		</div>
 	</template>
 
 	<template x-if="sheet">
-		<div class="sheet open" role="dialog" aria-modal="true" :aria-label="sheet.name">
+		<div id="entry-actions-panel" class="sheet sheet--entry open" role="dialog" aria-modal="true"
+			:aria-label="'Actions for ' + sheet.name">
 			<span class="sheet__title" x-text="sheet.name"></span>
-			<button class="sheet__item" x-show="sheet.kind" @click="preview(sheet)">
+			<button id="entry-preview-button" class="sheet__item" x-show="sheet.kind" @click="preview(sheet)" aria-label="Preview">
 				<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span>预览</span>
 			</button>
-			<button class="sheet__item" x-show="canEdit(sheet)" @click="editExisting(sheet)">
+			<button id="entry-edit-button" class="sheet__item" x-show="canEdit(sheet)" @click="editExisting(sheet)" aria-label="Edit">
 				<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span>编辑</span>
 			</button>
-			<a class="sheet__item" :href="sheet.href" :download="sheet.name">
+			<a id="entry-download-link" class="sheet__item" :href="sheet.href" :download="sheet.name" aria-label="Download">
 				<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
 			</a>
-			<button class="sheet__item" @click="copyLink(sheet)">
+			<button id="entry-copy-link-button" class="sheet__item" @click="copyLink(sheet)" aria-label="Copy link">
 				<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg><span>复制链接</span>
 			</button>
-			<button class="sheet__item sheet__item--danger" @click="askDelete(sheet)">
+			<button id="entry-delete-button" class="sheet__item sheet__item--danger" @click="askDelete(sheet)" aria-label="Delete">
 				<svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg><span>删除</span>
 			</button>
-			<button class="sheet__item sheet__item--muted" @click="sheet = null">取消</button>
+			<button id="entry-cancel-button" class="sheet__item sheet__item--muted" @click="sheet = null" aria-label="Cancel">取消</button>
 		</div>
 	</template>
 
 	<template x-if="confirmTarget">
-		<div class="sheet open" role="dialog" aria-modal="true">
+		<div id="delete-confirm-panel" class="sheet sheet--confirm open" role="dialog" aria-modal="true"
+			:aria-label="'Delete ' + confirmTarget.name + '?'">
 			<span class="sheet__title">删除 “<span x-text="confirmTarget.name"></span>” ？</span>
 			<p class="state" style="padding: 0 var(--sp-3) var(--sp-4); text-align: left;"
 				x-text="confirmTarget.isDir ? '目录及其中的所有文件都会被删除，无法撤销。' : '删除后无法撤销。'"></p>
 			<div class="sheet__actions">
-				<button class="btn btn--muted" @click="confirmTarget = null" :disabled="busy">取消</button>
-				<button class="btn btn--danger" @click="remove()" :disabled="busy"
+				<button id="delete-cancel-button" class="btn btn--muted" @click="confirmTarget = null" :disabled="busy" aria-label="Cancel">取消</button>
+				<button id="delete-confirm-button" class="btn btn--danger" @click="remove()" :disabled="busy" aria-label="Delete"
 					x-text="busy ? '删除中…' : '删除'"></button>
 			</div>
 		</div>
 	</template>
 
 	<template x-if="uploadConflicts">
-		<div class="sheet open" role="dialog" aria-modal="true">
+		<div id="upload-conflict-panel" class="sheet sheet--upload-conflict open" role="dialog" aria-modal="true"
+			aria-label="Upload conflicts">
 			<span class="sheet__title"><span x-text="uploadConflicts.length"></span> 个同名文件已存在</span>
 			<p class="sheet__note">继续上传会覆盖它们，原有内容无法恢复。</p>
 			<ul class="sheet__list">
@@ -792,28 +799,29 @@ const PAGE_HTML = `<!DOCTYPE html>
 					x-text="uploadConflicts.length > 5 ? '……以及另外 ' + (uploadConflicts.length - 5) + ' 个' : ''"></li>
 			</ul>
 			<div class="sheet__actions">
-				<button class="btn btn--muted" @click="uploadConflicts = null">取消</button>
-				<button class="btn btn--danger" @click="confirmOverwriteUpload()">覆盖</button>
+				<button id="upload-conflict-cancel-button" class="btn btn--muted" @click="uploadConflicts = null" aria-label="Cancel">取消</button>
+				<button id="upload-conflict-overwrite-button" class="btn btn--danger" @click="confirmOverwriteUpload()" aria-label="Overwrite">覆盖</button>
 			</div>
 		</div>
 	</template>
 
-	<div class="panel viewer" :class="[viewer.open ? 'open' : '', 'viewer--' + viewer.kind]" role="dialog" aria-modal="true">
+	<div id="viewer-panel" class="panel viewer" :class="[viewer.open ? 'open' : '', 'viewer--' + viewer.kind]" role="dialog"
+		aria-modal="true" :aria-label="'Preview of ' + (viewer.title || '')">
 		<div class="viewer__bar">
 			<span class="viewer__title" x-text="viewer.title"></span>
 			<div class="viewer__actions">
-				<button class="icon-btn" x-show="canEdit(viewer.entry)" @click="editFromViewer()" title="编辑" aria-label="编辑">
+				<button id="viewer-edit-button" class="icon-btn" x-show="canEdit(viewer.entry)" @click="editFromViewer()" title="编辑" aria-label="Edit">
 					<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg>
 				</button>
-				<button class="icon-btn" @click="copyLink(viewer.entry)" title="复制链接" aria-label="复制链接">
+				<button id="viewer-copy-link-button" class="icon-btn" @click="copyLink(viewer.entry)" title="复制链接" aria-label="Copy link">
 					<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg>
 				</button>
-				<a class="icon-btn" :href="viewer.entry && viewer.entry.href" :download="viewer.entry && viewer.entry.name"
-					title="下载" aria-label="下载">
+				<a id="viewer-download-link" class="icon-btn" :href="viewer.entry && viewer.entry.href" :download="viewer.entry && viewer.entry.name"
+					title="下载" aria-label="Download">
 					<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>
 				</a>
 				<span class="panel__sep" aria-hidden="true"></span>
-				<button class="icon-btn" @click="closeViewer()" aria-label="关闭预览">
+				<button id="viewer-close-button" class="icon-btn" @click="closeViewer()" aria-label="Close preview">
 					<svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
 				</button>
 			</div>
@@ -845,16 +853,16 @@ const PAGE_HTML = `<!DOCTYPE html>
 		</div>
 	</div>
 
-	<div class="panel editor" :class="{ open: editor.open }" role="dialog" aria-modal="true"
-		:aria-label="editor.href ? '编辑 ' + editor.name : '新建文本文件'">
+	<div id="editor-panel" class="panel editor" :class="{ open: editor.open }" role="dialog" aria-modal="true"
+		:aria-label="editor.href ? 'Edit ' + editor.name : 'New text file'">
 		<div class="editor__bar">
 			<span class="editor__title" x-text="editor.href ? editor.name : '新建文本文件'"></span>
-			<button class="icon-btn" :class="editor.conflict ? 'icon-btn--danger' : 'icon-btn--primary'"
-				@click="saveEditor()" :disabled="editor.busy" title="保存" aria-label="保存">
+			<button id="editor-save-button" class="icon-btn" :class="editor.conflict ? 'icon-btn--danger' : 'icon-btn--primary'"
+				@click="saveEditor()" :disabled="editor.busy" title="保存" aria-label="Save">
 				<svg class="icon" aria-hidden="true"><use href="#i-save"></use></svg>
 			</button>
 			<span class="panel__sep" aria-hidden="true"></span>
-			<button class="icon-btn" @click="requestCloseEditor()" aria-label="关闭编辑器">
+			<button id="editor-close-button" class="icon-btn" @click="requestCloseEditor()" aria-label="Close editor">
 				<svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
 			</button>
 		</div>
@@ -862,27 +870,28 @@ const PAGE_HTML = `<!DOCTYPE html>
 			<!-- 编辑已有文件时标题已经显示文件名，且这里本来也不可改，就不重复占一行 -->
 			<label class="editor__field" x-show="!editor.href">
 				<span class="editor__label">文件名</span>
-				<input class="editor__input" type="text" x-model="editor.name" @input="editor.conflict = false"
-					placeholder="untitled.txt" autocomplete="off" autocapitalize="off" spellcheck="false">
+				<input id="editor-name-input" class="editor__input" type="text" x-model="editor.name"
+					@input="editor.conflict = false" aria-label="File name" placeholder="untitled.txt"
+					autocomplete="off" autocapitalize="off" spellcheck="false">
 			</label>
-			<textarea class="editor__text" x-model="editor.text" spellcheck="false"
-				placeholder="在这里输入内容…" @input="editor.dirty = true"></textarea>
+			<textarea id="editor-textarea" class="editor__text" x-model="editor.text" spellcheck="false"
+				aria-label="File content" placeholder="在这里输入内容…" @input="editor.dirty = true"></textarea>
 			<p class="editor__error" x-show="editor.error" x-text="editor.error"></p>
 			<p class="editor__warn" x-show="editor.conflict">同名文件已存在，再点一次保存会覆盖它。</p>
 			<template x-if="editor.confirmDiscard">
 				<div class="editor__discard">
 					<span>有未保存的内容，确定放弃？</span>
 					<div class="sheet__actions">
-						<button class="btn btn--muted" @click="editor.confirmDiscard = false">继续编辑</button>
-						<button class="btn btn--danger" @click="discardEditor()">放弃</button>
+						<button id="editor-discard-cancel-button" class="btn btn--muted" @click="editor.confirmDiscard = false" aria-label="Keep editing">继续编辑</button>
+						<button id="editor-discard-confirm-button" class="btn btn--danger" @click="discardEditor()" aria-label="Discard">放弃</button>
 					</div>
 				</div>
 			</template>
 		</div>
 	</div>
 
-	<div class="dropzone" x-show="dragging" x-transition.opacity>松手即可上传到当前目录</div>
-	<div class="toast" x-show="toast" x-transition.opacity x-text="toast" role="status" aria-live="polite"></div>
+	<div id="dropzone" class="dropzone" x-show="dragging" x-transition.opacity aria-label="Drop files to upload">松手即可上传到当前目录</div>
+	<div id="toast" class="toast" x-show="toast" x-transition.opacity x-text="toast" role="status" aria-live="polite"></div>
 </div>
 
 <script>
