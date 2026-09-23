@@ -57,11 +57,12 @@ function fromR2Object(object: R2Object | null | undefined): DavProperties {
 
 	return {
 		creationdate: object.uploaded.toUTCString(),
-		// 这些值会直接拼进 XML，必须转义：Content-Disposition 之类里的 & 与 <
-		// 会让整个 multistatus 变成非法 XML，所有客户端都解析不了。
-		displayname: object.httpMetadata?.contentDisposition
-			? escape_xml(object.httpMetadata.contentDisposition)
-			: undefined,
+		// 这些值会直接拼进 XML，必须转义：元数据里的 & 与 < 会让整个 multistatus
+		// 变成非法 XML，所有客户端都解析不了。
+		// displayname 是"给人看的资源名"（RFC 4918 §15.2），就应该是文件名本身。
+		// 旧实现把 Content-Disposition 整体塞进来，客户端看到的是
+		// `attachment; filename="x.txt"` 这种字符串。
+		displayname: escape_xml(object.key.slice(object.key.lastIndexOf('/') + 1)),
 		getcontentlanguage: object.httpMetadata?.contentLanguage
 			? escape_xml(object.httpMetadata.contentLanguage)
 			: undefined,
@@ -462,70 +463,112 @@ async function handle_mkcol(request: Request, bucket: R2Bucket): Promise<Respons
 	return new Response('', { status: 201 });
 }
 
+type PropfindRequest = { mode: 'allprop' | 'propname' | 'prop'; names: string[] };
+
 /**
- * 隐式目录（没有标记对象，由其它工具直接写入深层 key 造成）的 <response>。
- * href 必须带尾斜杠，否则客户端会把它当文件；属性用 fromR2Object(null) 合成。
+ * 解析 PROPFIND 请求体。
+ *
+ * 无 body 或 `<allprop/>` → 全部属性；`<propname/>` → 只要属性名；
+ * `<prop>…</prop>` → 只返回点名的属性（RFC 4918 §9.1）。
+ * 旧实现完全忽略请求体，无论客户端要什么都返回全部 13 个属性。
  */
-function generate_implicit_collection_response(key: string): string {
-	return `
-	<response>
-		<href>/${escape_xml(encode_path(key))}/</href>
-		<propstat>
-			<prop>
-			${Object.entries(fromR2Object(null))
-				.filter(([, value]) => value !== undefined)
-				.map(([name, value]) => `<${name}>${value}</${name}>`)
-				.join('\n\t\t\t\t')}
-			</prop>
-			<status>HTTP/1.1 200 OK</status>
-		</propstat>
-	</response>`;
+async function parse_propfind_body(request: Request): Promise<PropfindRequest> {
+	const text = (await request.text()).trim();
+	if (text === '') {
+		return { mode: 'allprop', names: [] };
+	}
+	if (/<(?:[\w.-]+:)?propname\b/i.test(text)) {
+		return { mode: 'propname', names: [] };
+	}
+	const block = /<(?:[\w.-]+:)?prop\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?prop>/i.exec(text);
+	if (block === null) {
+		return { mode: 'allprop', names: [] };
+	}
+	// 属性名去掉命名空间前缀并统一小写（DAV 属性名本身都是小写）
+	const names = [...block[1].matchAll(/<([\w.-]+:)?([\w.-]+)/g)].map((match) => match[2].toLowerCase());
+	return { mode: 'prop', names: [...new Set(names)] };
 }
 
-function generate_propfind_response(object: R2Object | null): string {
-	if (object === null) {
-		return `
-	<response>
-		<href>/</href>
+/** 值本身就是 XML 片段的属性，不能转义。 */
+const RAW_XML_PROPS = new Set(['resourcetype', 'supportedlock', 'lockdiscovery']);
+
+function render_property(name: string, value: string): string {
+	return RAW_XML_PROPS.has(name) ? `<${name}>${value}</${name}>` : `<${name}>${escape_xml(value)}</${name}>`;
+}
+
+function propstat(inner: string, status: string): string {
+	return `
 		<propstat>
 			<prop>
-			${Object.entries(fromR2Object(null))
-				.filter(([_, value]) => value !== undefined)
-				.map(([key, value]) => `<${key}>${value}</${key}>`)
-				.join('\n				')}
+			${inner}
 			</prop>
-			<status>HTTP/1.1 200 OK</status>
-		</propstat>
-	</response>`;
+			<status>HTTP/1.1 ${status}</status>
+		</propstat>`;
+}
+
+/**
+ * 生成一条 <response>。
+ *
+ * `object` 为 null 表示没有标记对象的条目（桶根或隐式目录）；`collection` 为 true 时
+ * href 必须带尾斜杠，否则客户端会把它当文件。
+ * 被点名但不存在的属性按 RFC 4918 §9.1 用 404 propstat 回报。
+ */
+function generate_propfind_response(
+	key: string,
+	collection: boolean,
+	object: R2Object | null,
+	propfind: PropfindRequest,
+): string {
+	const href = key === '' ? '/' : `/${escape_xml(encode_path(key))}${collection ? '/' : ''}`;
+	const available = Object.entries(fromR2Object(object)).filter(([, value]) => value !== undefined) as Array<
+		[string, string]
+	>;
+
+	let propstats: string;
+	if (propfind.mode === 'propname') {
+		propstats = propstat(available.map(([name]) => `<${name} />`).join('\n\t\t\t\t'), '200 OK');
+	} else if (propfind.mode === 'prop') {
+		const found: string[] = [];
+		const missing: string[] = [];
+		for (const name of propfind.names) {
+			const match = available.find(([known]) => known === name);
+			if (match === undefined) {
+				missing.push(`<${name} />`);
+			} else {
+				found.push(render_property(match[0], match[1]));
+			}
+		}
+		propstats = '';
+		if (found.length > 0) {
+			propstats += propstat(found.join('\n\t\t\t\t'), '200 OK');
+		}
+		if (missing.length > 0) {
+			propstats += propstat(missing.join('\n\t\t\t\t'), '404 Not Found');
+		}
+		if (propstats === '') {
+			propstats = propstat('', '200 OK');
+		}
+	} else {
+		propstats = propstat(available.map(([name, value]) => render_property(name, value)).join('\n\t\t\t\t'), '200 OK');
 	}
 
-	// href 必须按 RFC 3986 做百分号编码（空格、非 ASCII、& 等），否则客户端拿到的地址是错的
-	let href = `/${escape_xml(encode_path(object.key))}${object.customMetadata?.resourcetype === '<collection />' ? '/' : ''}`;
 	return `
 	<response>
-		<href>${href}</href>
-		<propstat>
-			<prop>
-			${Object.entries(fromR2Object(object))
-				.filter(([_, value]) => value !== undefined)
-				.map(([key, value]) => `<${key}>${value}</${key}>`)
-				.join('\n				')}
-			</prop>
-			<status>HTTP/1.1 200 OK</status>
-		</propstat>
+		<href>${href}</href>${propstats}
 	</response>`;
 }
 
 async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Response> {
 	let resource_path = make_resource_path(request);
 
+	const propfind = await parse_propfind_body(request);
 	let target_is_collection: boolean;
 	let truncated = false;
 	let page = `<?xml version="1.0" encoding="utf-8"?>
 <multistatus xmlns="DAV:">`;
 
 	if (resource_path === '') {
-		page += generate_propfind_response(null);
+		page += generate_propfind_response('', true, null, propfind);
 		target_is_collection = true;
 	} else {
 		const resource = await resource_exists(bucket, resource_path);
@@ -533,11 +576,7 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 			return new Response('Not Found', { status: 404 });
 		}
 		target_is_collection = resource.is_collection;
-		// 隐式目录也要给出带尾斜杠的 href，否则客户端会把它当文件
-		page +=
-			resource.object === null
-				? generate_implicit_collection_response(resource_path)
-				: generate_propfind_response(resource.object);
+		page += generate_propfind_response(resource_path, resource.is_collection, resource.object, propfind);
 	}
 
 	if (target_is_collection) {
@@ -550,10 +589,7 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 				const listing = await listDir(bucket, prefix);
 				for (const entry of listing.entries) {
 					if (is_os_metadata_key(entry.key)) continue; // 历史遗留的影子文件也不暴露给客户端
-					page +=
-						entry.object === null
-							? generate_implicit_collection_response(entry.key)
-							: generate_propfind_response(entry.object);
+					page += generate_propfind_response(entry.key, entry.is_collection, entry.object, propfind);
 				}
 				truncated = listing.truncated;
 				break;
@@ -562,7 +598,7 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 				const listing = await listRecursive(bucket, prefix);
 				for (const object of listing.objects) {
 					if (is_os_metadata_key(object.key)) continue;
-					page += generate_propfind_response(object);
+					page += generate_propfind_response(object.key, is_collection(object), object, propfind);
 				}
 				truncated = listing.truncated;
 				break;
@@ -591,111 +627,65 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 	});
 }
 
+/** 解析 PROPPATCH 请求体里的 <set> / <remove> 属性名。 */
+async function parse_proppatch_body(request: Request): Promise<{ set: string[]; remove: string[] }> {
+	const text = await request.text();
+	const result: { set: string[]; remove: string[] } = { set: [], remove: [] };
+	const sections = text.matchAll(/<(?:[\w.-]+:)?(set|remove)\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?\1>/gi);
+	for (const section of sections) {
+		const action = section[1].toLowerCase() === 'set' ? 'set' : 'remove';
+		const block = /<(?:[\w.-]+:)?prop\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?prop>/i.exec(section[2]);
+		if (block === null) {
+			continue;
+		}
+		// 属性名去命名空间前缀；匹配用的字符集不含 XML 元字符，可以直接当标签名回显
+		for (const match of block[1].matchAll(/<([\w.-]+:)?([\w.-]+)/g)) {
+			result[action].push(match[2].toLowerCase());
+		}
+	}
+	result.set = [...new Set(result.set)];
+	result.remove = [...new Set(result.remove)];
+	return result;
+}
+
+/**
+ * PROPPATCH。
+ *
+ * 旧实现在这里用 HTMLRewriter 解析，但处理器只注册在 `propertyupdate` 一个元素上，
+ * `<set>` / `<remove>` / 具体属性从未被访问，`setProperties` 永远是空的 —— 于是响应是
+ * 一个**空的 <multistatus>**：既没解析、也没存储、也没告诉客户端失败。
+ *
+ * 现在按 RFC 4918 §9.2 明确回答：这些属性都不会被设置，因此逐个报 403
+ * （§9.2 要求服务器不设置的属性必须回 403，并且整个请求必须原子地失败）。
+ *
+ * 不实现“死属性”是刻意的取舍：R2 binding 没有“只改元数据”的接口，要存属性就必须把整个
+ * 对象重传一遍（自定义元数据还有 2 KiB 上限），而 Finder / Windows 每次上传都会发
+ * PROPPATCH —— 代价与收益完全不成比例。所以这里保持零写入，并如实告知客户端。
+ * 若将来确实需要死属性，正确做法是旁路对象（sidecar）或 Durable Objects。
+ */
 async function handle_proppatch(request: Request, bucket: R2Bucket): Promise<Response> {
 	const resource_path = make_resource_path(request);
 
-	// 检查资源是否存在
-	let object = await bucket.head(resource_path);
-	if (object === null) {
+	const resource = await resource_exists(bucket, resource_path);
+	if (resource === null) {
 		return new Response('Not Found', { status: 404 });
 	}
 
-	// 使用 HTMLRewriter 直接流式解析请求体，避免 await request.text()
-	const setProperties: { [key: string]: string } = {};
-	const removeProperties: string[] = [];
-	let currentAction: 'set' | 'remove' | null = null;
-	let currentPropName: string | null = null;
-	let currentPropValue: string = '';
+	const patch = await parse_proppatch_body(request);
+	const requested = [...new Set([...patch.set, ...patch.remove])];
+	const href = resource_path === '' ? '/' : `/${escape_xml(encode_path(resource_path))}`;
+	const failed = requested.length > 0;
 
-	class PropHandler {
-		element(element: Element) {
-			const tagName = element.tagName.toLowerCase();
-			if (tagName === 'set') {
-				currentAction = 'set';
-			} else if (tagName === 'remove') {
-				currentAction = 'remove';
-			} else if (tagName === 'prop') {
-				// 忽略 <prop> 标签
-			} else {
-				// 属性名称
-				currentPropName = tagName;
-				currentPropValue = '';
-			}
-		}
-
-		text(textChunk: Text) {
-			if (currentPropName) {
-				currentPropValue += textChunk.text;
-			}
-		}
-
-		end(element: Element) {
-			if (currentAction === 'set' && currentPropName) {
-				setProperties[currentPropName] = currentPropValue.trim();
-			} else if (currentAction === 'remove' && currentPropName) {
-				removeProperties.push(currentPropName);
-			}
-			currentPropName = null;
-			currentPropValue = '';
-		}
-	}
-
-	// 使用 HTMLRewriter 直接解析 request.body 流，避免内存加载
-	await new HTMLRewriter().on('propertyupdate', new PropHandler()).transform(new Response(request.body)).arrayBuffer();
-
-	// 复制原有的自定义元数据
-	const customMetadata = object.customMetadata ? { ...object.customMetadata } : {};
-
-	// 更新元数据
-	for (const propName in setProperties) {
-		customMetadata[propName] = setProperties[propName];
-	}
-
-	for (const propName of removeProperties) {
-		delete customMetadata[propName];
-	}
-
-	// 更新对象的元数据
-	const src = await bucket.get(object.key);
-	if (src === null) {
-		return new Response('Not Found', { status: 404 });
-	}
-
-	await bucket.put(object.key, src.body, {
-		httpMetadata: object.httpMetadata,
-		customMetadata: customMetadata,
-	});
-
-	// 构造响应
 	let responseXML = '<?xml version="1.0" encoding="utf-8"?>\n<multistatus xmlns="DAV:">\n';
-
-	for (const propName in setProperties) {
-		responseXML += `
-    <response>
-        <href>/${encode_path(object.key)}</href>
-        <propstat>
-            <prop>
-                <${propName} />
-            </prop>
-            <status>HTTP/1.1 200 OK</status>
-        </propstat>
-    </response>\n`;
+	responseXML += `  <response>\n    <href>${href}</href>\n    <propstat>\n      <prop>\n`;
+	for (const name of requested) {
+		responseXML += `        <${name} />\n`;
 	}
-
-	for (const propName of removeProperties) {
-		responseXML += `
-    <response>
-        <href>/${encode_path(object.key)}</href>
-        <propstat>
-            <prop>
-                <${propName} />
-            </prop>
-            <status>HTTP/1.1 200 OK</status>
-        </propstat>
-    </response>\n`;
+	responseXML += `      </prop>\n      <status>HTTP/1.1 ${failed ? '403 Forbidden' : '200 OK'}</status>\n    </propstat>\n`;
+	if (failed) {
+		responseXML += `    <responsedescription>This server does not implement dead properties, so no property was changed.</responsedescription>\n`;
 	}
-
-	responseXML += '</multistatus>';
+	responseXML += '  </response>\n</multistatus>';
 
 	return new Response(responseXML, {
 		status: 207,

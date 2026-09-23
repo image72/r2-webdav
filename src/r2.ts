@@ -31,8 +31,9 @@ export function encode_path(path: string): string {
 // Performance configuration constants
 export const PERFORMANCE_CONFIG = {
 	MAX_OBJECTS_PER_REQUEST: 3000, // Limit for directory listings
-	MAX_PROPFIND_DEPTH: 5, // Maximum depth for PROPFIND infinity requests
-	MAX_CONCURRENT_OPERATIONS: 50, // Concurrent operations limit
+	// Cloudflare 限制每次调用最多 6 个正在等待响应头的连接，R2 的 list/get/put/delete/head
+	// 都计入该限制。旧值 50 永远达不到，只会让 50 个 Promise 先排队、再一起等最慢的那个。
+	MAX_CONCURRENT_OPERATIONS: 6,
 	// R2 的 delete() 每次最多接受 1000 个 key（见 Workers API reference）。旧值写成 3000，
 	// 只是因为 key 都来自 list() 的分页（每页 ≤1000）才碰巧没有越界。
 	MAX_BATCH_DELETE_SIZE: 1000,
@@ -162,12 +163,9 @@ export async function processWithConcurrencyLimit<T>(
 	processor: (item: T) => Promise<void>,
 	concurrencyLimit: number = PERFORMANCE_CONFIG.MAX_CONCURRENT_OPERATIONS,
 ): Promise<void> {
-	const results: Promise<void>[] = [];
 	for (let i = 0; i < items.length; i += concurrencyLimit) {
-		const batch = items.slice(i, i + concurrencyLimit);
-		const batchPromises = batch.map(processor);
-		results.push(...batchPromises);
-		await Promise.all(batchPromises);
+		// 按批 await：批内并行受平台 6 连接上限约束，超出部分会排队
+		await Promise.all(items.slice(i, i + concurrencyLimit).map(processor));
 	}
 }
 
