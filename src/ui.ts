@@ -468,8 +468,10 @@ const PAGE_HTML = `<!DOCTYPE html>
 		border-bottom: 1px solid var(--line);
 	}
 	.viewer__title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	/* 防误触：删除放最左、关闭放最右，中间隔着 复制链接/下载 与分隔线（边缘距离约 121px）；
-	   相邻 44px 目标之间留 8px。删除按钮在触摸设备上常态即红色（触屏没有 hover） */
+	/* 防误触：关闭固定在最右，往左依次是下载、复制链接（中间隔一条分隔线），再往左是「编辑」。
+	   「编辑」只在文本类文件上出现，位置就在原来删除的位置。删除已从预览栏移除 ——
+	   它现在只出现在列表的「更多」菜单里，不再和关闭按钮同屏，想误触也碰不到。
+	   相邻 44px 目标之间留 8px。 */
 	.viewer__actions { display: flex; align-items: center; gap: var(--sp-2); }
 	.panel__sep { width: 1px; height: 24px; background: var(--line); margin: 0 var(--sp-2); flex: none; }
 	.icon-btn--danger { color: var(--danger); }
@@ -740,7 +742,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			<button class="sheet__item" x-show="sheet.kind" @click="preview(sheet)">
 				<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span>预览</span>
 			</button>
-			<button class="sheet__item" x-show="sheet.kind === 'text' || sheet.kind === 'markdown'" @click="editExisting(sheet)">
+			<button class="sheet__item" x-show="canEdit(sheet)" @click="editExisting(sheet)">
 				<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span>编辑</span>
 			</button>
 			<a class="sheet__item" :href="sheet.href" :download="sheet.name">
@@ -773,8 +775,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 		<div class="viewer__bar">
 			<span class="viewer__title" x-text="viewer.title"></span>
 			<div class="viewer__actions">
-				<button class="icon-btn icon-btn--danger" @click="askDelete(viewer.entry)" title="删除" aria-label="删除">
-					<svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg>
+				<button class="icon-btn" x-show="canEdit(viewer.entry)" @click="editFromViewer()" title="编辑" aria-label="编辑">
+					<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg>
 				</button>
 				<button class="icon-btn" @click="copyLink(viewer.entry)" title="复制链接" aria-label="复制链接">
 					<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg>
@@ -934,6 +936,11 @@ const PAGE_HTML = `<!DOCTYPE html>
 				return this.formatSize(entry.size) + ' · ' + this.formatDate(entry.modified);
 			},
 
+			/** 只有文本类文件能在网页里编辑：其它类型没有可靠的文本往返。 */
+			canEdit(entry) {
+				return !!entry && (entry.kind === 'text' || entry.kind === 'markdown');
+			},
+
 			formatSize(bytes) {
 				const units = ['B', 'KB', 'MB', 'GB', 'TB'];
 				let value = bytes;
@@ -962,6 +969,14 @@ const PAGE_HTML = `<!DOCTYPE html>
 				}
 				if (entry.kind) this.preview(entry);
 				else location.href = entry.href;
+			},
+
+			/** 从预览层进入编辑：先关掉预览，否则保存后预览里还是旧内容。 */
+			async editFromViewer() {
+				const entry = this.viewer.entry;
+				if (!entry) return;
+				this.closeViewer();
+				await this.editExisting(entry);
 			},
 
 			async preview(entry) {
