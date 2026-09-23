@@ -7,8 +7,38 @@
 
 import { decode_path, encode_path, is_os_metadata_key, listDir } from './r2';
 import PAGE_HTML from './index.html';
+import ARCHIVE_JS from './archive.client.js';
 
 export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
+
+/**
+ * 客户端静态资源的路径。
+ *
+ * 放 `_app/` 前缀下是为了和用户数据分开 —— 这是个代码路由，R2 里并没有同名对象。
+ * 不能用相对路径：页面本身是挂在任意集合路径上的（`/sub/` 也返回这个页面）。
+ */
+export const ARCHIVE_ASSET_PATH = '/_app/archive.client.js';
+
+/**
+ * 分发客户端静态资源；不是资源请求就返回 null，交给 WebDAV 那层。
+ *
+ * 必须在 WebDAV 分发**之前**拦：无尾斜杠的 GET 在协议层是「取一个对象」，
+ * 会去 R2 里找一个叫 `_app/archive.client.js` 的对象然后 404。
+ * 这也意味着这个路径被占用了 —— 用户存不了这个键，可接受（`_app/` 就是留给应用的）。
+ */
+export function handle_asset_request(request: Request): Response | null {
+	if (request.method !== 'GET' && request.method !== 'HEAD') return null;
+	if (new URL(request.url).pathname !== ARCHIVE_ASSET_PATH) return null;
+	return new Response(request.method === 'HEAD' ? null : ARCHIVE_JS, {
+		status: 200,
+		headers: {
+			'Content-Type': 'text/javascript; charset=utf-8',
+			// no-cache 而不是长缓存：改了文件刷新就生效，不用去记版本号。
+			// 将来真要长缓存，把版本写进 URL 比写在这里稳。
+			'Cache-Control': 'no-cache',
+		},
+	});
+}
 
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown']);
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg']);

@@ -12,6 +12,7 @@
  */
 
 import { SUPPORT_METHODS, dispatch_handler } from './webdav';
+import { handle_asset_request } from './ui';
 
 export interface Env {
 	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
@@ -47,7 +48,9 @@ export default {
 			});
 		}
 
-		let response: Response = await dispatch_handler(request, bucket);
+		// 页面用的静态资源要先拦：无尾斜杠的 GET 在 WebDAV 语义里是「取一个对象」，
+		// 直接进 dispatch_handler 会去 R2 里找同名对象然后 404。
+		let response: Response = handle_asset_request(request) ?? (await dispatch_handler(request, bucket));
 
 		// Set CORS headers
 		response.headers.set('Access-Control-Allow-Origin', request.headers.get('Origin') ?? '*');
