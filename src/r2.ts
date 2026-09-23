@@ -5,7 +5,9 @@ export const PERFORMANCE_CONFIG = {
 	MAX_OBJECTS_PER_REQUEST: 3000, // Limit for directory listings
 	MAX_PROPFIND_DEPTH: 5, // Maximum depth for PROPFIND infinity requests
 	MAX_CONCURRENT_OPERATIONS: 50, // Concurrent operations limit
-	MAX_BATCH_DELETE_SIZE: 3000, // Maximum objects per batch delete
+	// R2 的 delete() 每次最多接受 1000 个 key（见 Workers API reference）。旧值写成 3000，
+	// 只是因为 key 都来自 list() 的分页（每页 ≤1000）才碰巧没有越界。
+	MAX_BATCH_DELETE_SIZE: 1000,
 } as const;
 
 export async function* listAll(bucket: R2Bucket, prefix: string, isRecursive: boolean = false, maxObjects?: number) {
