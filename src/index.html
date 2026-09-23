@@ -124,6 +124,12 @@
 				color: var(--ink);
 			}
 
+			/* 开着「查看」时的状态：用强调色标出来，免得不知道自己在哪个模式 */
+			.icon-btn--on {
+				background: var(--accent-soft);
+				color: var(--accent);
+			}
+
 			.crumbs {
 				display: flex;
 				align-items: center;
@@ -737,6 +743,22 @@
 				resize: none;
 				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 				line-height: 1.6;
+			}
+
+			/*
+			 * 「查看」面板。尺寸规则必须与 .editor__text **完全一致**。
+			 * .editor 是从底部吸附的（left/right/bottom = 0），内容高 1px 整块面板就往上挪 1px，
+			 * 而高度没有过渡——看着就是硬跳一下。两者共用 flex:1 + min-height:45dvh，切换时高度不变。
+			 */
+			.editor__preview {
+				flex: 1;
+				min-height: 45dvh;
+				padding: var(--sp-3);
+				border: 1px solid var(--line);
+				border-radius: var(--r-md);
+				background: var(--surface);
+				overflow-y: auto;
+				overscroll-behavior: contain;
 			}
 			.editor__error,
 			.editor__warn {
@@ -1457,6 +1479,19 @@
 			>
 				<div class="editor__bar">
 					<span class="editor__title" x-text="editor.href ? editor.name : '新建文本文件'"></span>
+					<!-- 「查看」放在保存旁边，但**不关掉编辑器**：改一改 → 看一眼 → 再改，
+					     每次想看效果都得先保存一次（真的写服务器）太别扭了。 -->
+					<button
+						id="editor-preview-button"
+						class="icon-btn"
+						:class="editor.preview ? 'icon-btn--on' : ''"
+						x-show="canPreviewEditor()"
+						@click="toggleEditorPreview()"
+						:title="editor.preview ? '继续编辑' : '查看效果'"
+						:aria-label="editor.preview ? 'Back to editing' : 'Preview'"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+					</button>
 					<button
 						id="editor-save-button"
 						class="icon-btn"
@@ -1490,15 +1525,20 @@
 							spellcheck="false"
 						/>
 					</label>
+					<!-- 用 x-show 不用 x-if：textarea 必须留在 DOM 里，否则来回切会丢光标和滚动位置 -->
 					<textarea
 						id="editor-textarea"
 						class="editor__text"
+						x-show="!editor.preview"
 						x-model="editor.text"
 						spellcheck="false"
 						aria-label="File content"
 						placeholder="在这里输入内容…"
 						@input="editor.dirty = true"
 					></textarea>
+					<div class="editor__preview" x-ref="editorPreview" x-show="editor.preview" aria-label="Preview">
+						<div class="md" x-html="editor.html"></div>
+					</div>
 					<p class="editor__error" x-show="editor.error" x-text="editor.error"></p>
 					<p class="editor__warn" x-show="editor.conflict">同名文件已存在，再点一次保存会覆盖它。</p>
 					<template x-if="editor.confirmDiscard">
@@ -1549,6 +1589,21 @@
 		<script>
 			// 目录打包 / 解压实现在 src/archive.client.js（见那里的注释）。这里只保留页面状态，
 			// 不再内联体积庞大的归档逻辑 —— 那个文件可以整个删掉而不影响页面其它部分。
+
+			// 与 src/ui.ts 的 MARKDOWN_EXTENSIONS 保持一致。
+			const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'mdown'];
+
+			// markdown-it 实例只建一次。放在组件外面是故意的：Alpine 会深度代理 $data，
+			// 一个带内部状态的渲染器实例被代理后很容易出怪问题（而且白白变慢）。
+			let markdown_renderer = null;
+
+			function markdown_to_html(text) {
+				if (!markdown_renderer) {
+					markdown_renderer = window.markdownit({ html: true, linkify: true, typographer: true, breaks: true });
+				}
+				return markdown_renderer.render(text);
+			}
+
 			window.browser = function () {
 				return {
 					entries: [],
@@ -1589,6 +1644,11 @@
 						busy: false,
 						error: '',
 						confirmDiscard: false,
+						// 是否正在「查看」；html 是已渲染的结果，renderedFrom 是它对应的原文。
+						// 三者都只在打开/关闭编辑器时重置，在编辑 ⇄ 查看之间来回切不丢。
+						preview: false,
+						html: '',
+						renderedFrom: '',
 					},
 
 					init() {
@@ -1748,13 +1808,11 @@
 							const text = await response.text();
 							if (entry.kind === 'markdown') {
 								await this.loadMarkdown();
-								this.viewer.html = window
-									.markdownit({ html: true, linkify: true, typographer: true, breaks: true })
-									.render(text);
+								this.viewer.html = markdown_to_html(text);
 								this.viewer.status = 'ready';
 								// 等 Alpine 把 HTML 写进 DOM 之后再画 mermaid 图
 								await this.$nextTick();
-								await this.renderMermaid();
+								await this.renderMermaid(this.$refs.viewerBody);
 							} else {
 								this.viewer.text = text;
 								this.viewer.status = 'ready';
@@ -1782,10 +1840,9 @@
 					},
 
 					// markdown-it 会把 mermaid 代码块渲染成 <pre><code>，这里换成 mermaid 节点再绘制。
-					async renderMermaid() {
-						if (!window.mermaid) return;
-						const root = this.$refs.viewerBody && this.$refs.viewerBody.querySelector('.md');
-						if (!root) return;
+					// root 是**包含**已渲染 markdown 的那个元素（预览面板 / 编辑器里的「查看」）。
+					async renderMermaid(root) {
+						if (!window.mermaid || !root) return;
 						root.querySelectorAll('code.language-mermaid').forEach((block) => {
 							const container = document.createElement('div');
 							container.className = 'mermaid';
@@ -2107,6 +2164,9 @@
 							busy: false,
 							error: '',
 							confirmDiscard: false,
+							preview: false,
+							html: '',
+							renderedFrom: '',
 						};
 					},
 
@@ -2139,6 +2199,48 @@
 						this.editor.open = false;
 						this.editor.confirmDiscard = false;
 						this.editor.text = '';
+						// 只有真正关掉编辑器才丢掉已渲染的内容：在编辑 ⇄ 查看之间来回切不丢，
+						// 否则每次切回查看都要重新渲染一遍（mermaid 图会闪一下）。
+						this.editor.preview = false;
+						this.editor.html = '';
+						this.editor.renderedFrom = '';
+					},
+
+					/** 「查看」只对 markdown 有意义：纯文本/代码在编辑器里看到的就是最终样子。 */
+					canPreviewEditor() {
+						const name = this.editor.name || '';
+						const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+						return MARKDOWN_EXTENSIONS.includes(ext);
+					},
+
+					/**
+					 * 在编辑器里切换「查看」。
+					 *
+					 * 刻意**不关编辑器、也不动 editor.text / dirty**：用户要的是改一改 → 看一眼 → 再改。
+					 * 之前想看效果只能先保存（真的写服务器）再退出再预览，而且新建文件时根本无从看起。
+					 */
+					async toggleEditorPreview() {
+						if (this.editor.preview) {
+							this.editor.preview = false;
+							return;
+						}
+						// 先把面板显示出来再渲染：mermaid 需要节点已经在布局里才能量出尺寸
+						this.editor.preview = true;
+						this.editor.error = '';
+						try {
+							await this.loadMarkdown();
+							// 内容没变就不重渲染：来回切换不该反复重画 mermaid 图
+							if (this.editor.renderedFrom !== this.editor.text) {
+								this.editor.html = markdown_to_html(this.editor.text);
+								this.editor.renderedFrom = this.editor.text;
+							}
+							await this.$nextTick();
+							await this.renderMermaid(this.$refs.editorPreview);
+						} catch (err) {
+							// 出错就退回编辑态，否则错误信息会显示在一个看不见的地方
+							this.editor.preview = false;
+							this.editor.error = '预览失败：' + err.message;
+						}
 					},
 
 					async saveEditor() {
