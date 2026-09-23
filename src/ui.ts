@@ -445,6 +445,15 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.sheet__item.sheet__item--muted { margin-top: var(--sp-3); }
 	.sheet__actions { display: flex; gap: var(--sp-2); padding: var(--sp-3) 0 0; }
 	.sheet__actions .btn { flex: 1; }
+	.sheet__note { margin: 0; padding: 0 var(--sp-3) var(--sp-3); color: var(--danger); font-size: 14px; }
+	.sheet__list {
+		margin: 0;
+		padding: 0 var(--sp-3) var(--sp-4);
+		list-style: none;
+		color: var(--ink-60);
+		font-size: 14px;
+	}
+	.sheet__list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 	/* 预览层与编辑器共用的抽屉外壳：移动端全屏、桌面端右侧停靠 */
 	.panel {
@@ -646,7 +655,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 <div class="app"
 	x-data="browser()"
 	x-init="init()"
-	x-effect="document.body.classList.toggle('locked', !!(viewer.open || sheet || confirmTarget || newMenu || editor.open))"
+	x-effect="document.body.classList.toggle('locked', !!(viewer.open || sheet || confirmTarget || newMenu || editor.open || uploadConflicts))"
 	@dragover.prevent="dragging = true"
 	@dragleave="dragging = false"
 	@drop.prevent="onDrop($event)">
@@ -720,8 +729,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 	<input type="file" multiple x-ref="picker" @change="onPick($event)" aria-hidden="true" tabindex="-1"
 		style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
 
-	<div class="backdrop" :class="{ open: !!(sheet || confirmTarget || newMenu || editor.open) }"
-		@click="sheet = null; confirmTarget = null; newMenu = false"></div>
+	<div class="backdrop" :class="{ open: !!(sheet || confirmTarget || newMenu || editor.open || uploadConflicts) }"
+		@click="sheet = null; confirmTarget = null; newMenu = false; uploadConflicts = null"></div>
 
 	<template x-if="newMenu">
 		<div class="sheet open" role="dialog" aria-modal="true" aria-label="新建">
@@ -767,6 +776,24 @@ const PAGE_HTML = `<!DOCTYPE html>
 				<button class="btn btn--muted" @click="confirmTarget = null" :disabled="busy">取消</button>
 				<button class="btn btn--danger" @click="remove()" :disabled="busy"
 					x-text="busy ? '删除中…' : '删除'"></button>
+			</div>
+		</div>
+	</template>
+
+	<template x-if="uploadConflicts">
+		<div class="sheet open" role="dialog" aria-modal="true">
+			<span class="sheet__title"><span x-text="uploadConflicts.length"></span> 个同名文件已存在</span>
+			<p class="sheet__note">继续上传会覆盖它们，原有内容无法恢复。</p>
+			<ul class="sheet__list">
+				<template x-for="file in uploadConflicts.slice(0, 5)" :key="file.name">
+					<li x-text="'· ' + file.name"></li>
+				</template>
+				<li x-show="uploadConflicts.length > 5"
+					x-text="uploadConflicts.length > 5 ? '……以及另外 ' + (uploadConflicts.length - 5) + ' 个' : ''"></li>
+			</ul>
+			<div class="sheet__actions">
+				<button class="btn btn--muted" @click="uploadConflicts = null">取消</button>
+				<button class="btn btn--danger" @click="confirmOverwriteUpload()">覆盖</button>
 			</div>
 		</div>
 	</template>
@@ -870,6 +897,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			toast: '',
 			sheet: null,
 			confirmTarget: null,
+			uploadConflicts: null,
 			newMenu: false,
 			viewer: { open: false, entry: null, kind: '', title: '', href: '', status: 'loading', text: '', html: '', error: '' },
 			editor: { open: false, href: '', name: '', text: '', contentType: null, dirty: false, conflict: false, busy: false, error: '', confirmDiscard: false },
@@ -880,6 +908,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 				document.addEventListener('keydown', (event) => {
 					if (event.key !== 'Escape') return;
 					if (this.confirmTarget) this.confirmTarget = null;
+					else if (this.uploadConflicts) this.uploadConflicts = null;
 					else if (this.sheet) this.sheet = null;
 					else if (this.newMenu) this.newMenu = false;
 					else if (this.editor.open) this.requestCloseEditor();
@@ -1186,18 +1215,28 @@ const PAGE_HTML = `<!DOCTYPE html>
 				this.upload(Array.from(event.dataTransfer.files || []));
 			},
 
-			async upload(files) {
+			async upload(files, options) {
 				if (files.length === 0) return;
+				// 不传 options 时先按"不允许覆盖"上传：让服务端在重名时回 412，
+				// 而不是静默替掉用户已有的文件。用 If-None-Match 而不是先发 HEAD 探测，
+				// 是因为由服务端原子判定没有竞态窗口（探测与写入之间可能被人抢先建同名文件）。
+				const overwrite = !!(options && options.overwrite);
 				this.busy = true;
+				const conflicts = [];
 				let done = 0;
 				for (const file of files) {
-					this.notify('上传中 ' + (done + 1) + '/' + files.length + '：' + file.name);
+					this.notify('上传中 ' + (done + conflicts.length + 1) + '/' + files.length + '：' + file.name);
 					try {
 						const response = await fetch(location.pathname + encodeURIComponent(file.name), {
 							method: 'PUT',
 							body: file,
 							credentials: 'include',
+							headers: overwrite ? undefined : { 'If-None-Match': '*' },
 						});
+						if (!overwrite && response.status === 412) {
+							conflicts.push(file);
+							continue;
+						}
 						if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 						done++;
 					} catch (err) {
@@ -1208,8 +1247,57 @@ const PAGE_HTML = `<!DOCTYPE html>
 					}
 				}
 				this.busy = false;
-				this.notify('已上传 ' + done + ' 个文件');
+
+				// 重名的分两类：同名文件交给用户确认，同名目录直接跳过
+				// （目录的标记对象若被文件替掉，目录里的内容会变得不可见）
+				//
+				// 先用当前列表做一次快速判断；列表可能过期（别的客户端刚建了同名目录）
+				// 或压根没加载成功，所以列表里没有的一律再向服务器确认一次 ——
+				// 这一步只在出现重名时才发生，代价有限，但能杜绝"把目录覆盖成文件"。
+				const dirNames = new Set(this.entries.filter((entry) => entry.isDir).map((entry) => entry.name));
+				const blocked = [];
+				const pending = [];
+				for (const file of conflicts) {
+					if (dirNames.has(file.name)) {
+						blocked.push(file);
+						continue;
+					}
+					let isDir = false;
+					try {
+						const probe = await fetch(location.pathname + encodeURIComponent(file.name), {
+							method: 'PROPFIND',
+							credentials: 'include',
+							headers: { Depth: '0', 'Content-Type': 'application/xml' },
+							body: '<?xml version="1.0"?><propfind xmlns="DAV:"><prop><resourcetype/></prop></propfind>',
+						});
+						isDir = probe.ok && (await probe.text()).includes('<collection />');
+					} catch {
+						// 探测失败就当作文件处理：下面的覆盖仍需用户确认
+					}
+					(isDir ? blocked : pending).push(file);
+				}
+
+				if (pending.length > 0) {
+					this.uploadConflicts = pending;
+					if (done > 0) this.notify('已上传 ' + done + ' 个文件');
+					await this.load();
+					return;
+				}
+
+				// 只留一条提示：toast 只有一个槽位，后面的 notify 会把前面那条盖掉
+				// （曾经因此把"跳过同名目录"盖成了毫无信息量的"已上传 0 个文件"）
+				const parts = [];
+				if (done > 0) parts.push('已上传 ' + done + ' 个文件');
+				if (blocked.length > 0) parts.push('跳过同名目录：' + blocked.map((file) => file.name).join('、'));
+				this.notify(parts.length > 0 ? parts.join('；') : '没有文件被上传');
 				await this.load();
+			},
+
+			/** 用户在覆盖确认里选了"覆盖":重跑一次，这次不带 If-None-Match。 */
+			async confirmOverwriteUpload() {
+				const files = this.uploadConflicts || [];
+				this.uploadConflicts = null;
+				await this.upload(files, { overwrite: true });
 			},
 
 			notify(message) {
