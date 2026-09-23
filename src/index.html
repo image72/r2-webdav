@@ -446,10 +446,19 @@
 			.sheet--new-folder .editor__error {
 				padding: var(--sp-2) var(--sp-3) 0;
 			}
-			/* 标题即改名入口：不新增按钮，靠标题本身承载（面板宽 366px，比预览栏的 133px 宽得多） */
+			/*
+				标题即改名入口：不新增按钮，靠标题本身承载（面板宽 366px，比预览栏的 133px 宽得多）。
+
+				它和下面的 .sheet__rename-input 必须**高度完全一致**：面板是底部吸附的
+				（left/right/bottom = 0），内容一旦变高，整块面板就往上跳。
+				输入框原来是 50px、标题 47px，切到编辑态时会看到面板硬跳 3px。
+			*/
 			.sheet__title--edit {
-				display: block;
+				display: flex;
+				align-items: center;
+				height: 48px;
 				width: 100%;
+				padding: 0 var(--sp-3);
 				border: 0;
 				border-radius: var(--r-sm);
 				background: none;
@@ -460,16 +469,27 @@
 				background: var(--bg);
 			}
 			.sheet__rename-input {
+				height: 48px; /* 与 .sheet__title--edit 一致，否则面板会跳 */
 				width: 100%;
-				min-height: var(--tap);
-				padding: var(--sp-3);
-				border: 1px solid var(--accent);
+				padding: 0 var(--sp-3);
+				border: 1px solid var(--line);
 				border-radius: var(--r-md);
 				background: var(--surface);
 				color: var(--ink);
 				font: inherit;
 				font-weight: 600;
 				font-size: 16px; /* ≥16px，避免 iOS 聚焦输入框时自动放大页面 */
+			}
+			/*
+				聚焦只靠边框变色表示，**不开 outline**。
+				否则会与上面的 border 叠成两圈：全局 :focus-visible 是
+				`outline: 2px solid var(--accent); outline-offset: 2px`，
+				和 accent 色的 border 一起就是「边框 + 分离的一圈」，看着像画了两层。
+				项目里 .editor__input:focus 就是这个约定，这里保持一致。
+			*/
+			.sheet__rename-input:focus {
+				border-color: var(--accent);
+				outline: none;
 			}
 			.sheet__rename-error {
 				padding: var(--sp-2) var(--sp-3) 0;
