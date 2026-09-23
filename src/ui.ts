@@ -430,7 +430,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.sheet__actions { display: flex; gap: var(--sp-2); padding: var(--sp-3) 0 0; }
 	.sheet__actions .btn { flex: 1; }
 
-	.viewer {
+	/* 预览层与编辑器共用的抽屉外壳：移动端全屏、桌面端右侧停靠 */
+	.panel {
 		position: fixed;
 		inset: 0;
 		z-index: 60;
@@ -442,7 +443,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 		visibility: hidden;
 		transition: transform 0.26s ease, visibility 0s linear 0.26s;
 	}
-	.viewer.open { transform: translateY(0); visibility: visible; transition: transform 0.26s ease, visibility 0s; }
+	.panel.open { transform: translateY(0); visibility: visible; transition: transform 0.26s ease, visibility 0s; }
 	.viewer__bar {
 		display: flex;
 		align-items: center;
@@ -454,7 +455,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 	/* 防误触：删除放最左、关闭放最右，中间隔着 复制链接/下载 与分隔线（边缘距离约 121px）；
 	   相邻 44px 目标之间留 8px。删除按钮在触摸设备上常态即红色（触屏没有 hover） */
 	.viewer__actions { display: flex; align-items: center; gap: var(--sp-2); }
-	.viewer__sep { width: 1px; height: 24px; background: var(--line); margin: 0 var(--sp-2); flex: none; }
+	.panel__sep { width: 1px; height: 24px; background: var(--line); margin: 0 var(--sp-2); flex: none; }
 	.icon-btn--danger { color: var(--danger); }
 	.icon-btn--danger:hover { background: var(--danger-soft); color: var(--danger); }
 	.viewer__body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--sp-4); }
@@ -489,6 +490,61 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.md th, .md td { border: 1px solid var(--line); padding: var(--sp-1) var(--sp-2); }
 	.md img { max-width: 100%; }
 	.md a { color: var(--accent); }
+
+	/* 编辑器：复用 .panel 外壳；z-index 高于遮罩，编辑时不被压暗 */
+	.editor { z-index: 67; }
+	.editor__bar {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-2);
+		padding: calc(var(--sp-2) + env(safe-area-inset-top)) var(--sp-2) var(--sp-2) var(--sp-4);
+		border-bottom: 1px solid var(--line);
+	}
+	.editor__title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.editor__body {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-2);
+		overflow-y: auto;
+		padding: var(--sp-4);
+	}
+	.editor__field { display: flex; flex-direction: column; gap: var(--sp-1); }
+	.editor__label { font-size: 13px; color: var(--ink-60); }
+	.editor__input,
+	.editor__text {
+		width: 100%;
+		min-height: var(--tap);
+		padding: var(--sp-3);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		background: var(--surface);
+		color: var(--ink);
+		font: inherit;
+		font-size: 16px; /* ≥16px，避免 iOS 聚焦输入框时自动放大页面 */
+	}
+	.editor__input:read-only { background: var(--bg); color: var(--ink-60); }
+	.editor__input:focus,
+	.editor__text:focus { border-color: var(--accent); outline: none; }
+	.editor__text {
+		flex: 1;
+		min-height: 45dvh;
+		resize: none;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		line-height: 1.6;
+	}
+	.editor__error, .editor__warn { margin: 0; font-size: 14px; color: var(--danger); }
+	.editor__discard {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-1);
+		padding: var(--sp-3);
+		border: 1px solid var(--danger);
+		border-radius: var(--r-md);
+		background: var(--danger-soft);
+	}
+	.editor__discard > span { font-weight: 600; }
 
 	.dropzone {
 		position: fixed;
@@ -535,8 +591,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 			opacity: 0;
 		}
 		.sheet.open { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-		.viewer { inset: 0 0 0 auto; width: min(760px, 92vw); transform: translateX(100%); box-shadow: -8px 0 32px rgba(15, 23, 42, 0.16); }
-		.viewer.open { transform: translateX(0); }
+		.panel { inset: 0 0 0 auto; width: min(760px, 92vw); transform: translateX(100%); box-shadow: -8px 0 32px rgba(15, 23, 42, 0.16); }
+		.panel.open { transform: translateX(0); }
 	}
 </style>
 </head>
@@ -562,11 +618,14 @@ const PAGE_HTML = `<!DOCTYPE html>
 	<symbol id="i-link" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></symbol>
 	<symbol id="i-delete" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></symbol>
 	<symbol id="i-warning" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></symbol>
+	<symbol id="i-add" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></symbol>
+	<symbol id="i-note-add" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"/></symbol>
+	<symbol id="i-edit" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></symbol>
 </svg>
 <div class="app"
 	x-data="browser()"
 	x-init="init()"
-	x-effect="document.body.classList.toggle('locked', !!(viewer.open || sheet || confirmTarget))"
+	x-effect="document.body.classList.toggle('locked', !!(viewer.open || sheet || confirmTarget || newMenu || editor.open))"
 	@dragover.prevent="dragging = true"
 	@dragleave="dragging = false"
 	@drop.prevent="onDrop($event)">
@@ -629,20 +688,36 @@ const PAGE_HTML = `<!DOCTYPE html>
 		</ul>
 	</main>
 
-	<button class="fab" @click="pickerRef().click()">
-		<svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg><span>上传</span>
+	<button class="fab" @click="newMenu = true">
+		<svg class="icon" aria-hidden="true"><use href="#i-add"></use></svg><span>新建</span>
 	</button>
 	<input type="file" multiple x-ref="picker" @change="onPick($event)" aria-hidden="true" tabindex="-1"
 		style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
 
-	<div class="backdrop" :class="{ open: !!(sheet || confirmTarget) }"
-		@click="sheet = null; confirmTarget = null"></div>
+	<div class="backdrop" :class="{ open: !!(sheet || confirmTarget || newMenu || editor.open) }"
+		@click="sheet = null; confirmTarget = null; newMenu = false"></div>
+
+	<template x-if="newMenu">
+		<div class="sheet open" role="dialog" aria-modal="true" aria-label="新建">
+			<span class="sheet__title">新建</span>
+			<button class="sheet__item" @click="newMenu = false; pickerRef().click()">
+				<svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg><span>上传文件</span>
+			</button>
+			<button class="sheet__item" @click="openEditor()">
+				<svg class="icon" aria-hidden="true"><use href="#i-note-add"></use></svg><span>新建文本文件</span>
+			</button>
+			<button class="sheet__item sheet__item--muted" @click="newMenu = false">取消</button>
+		</div>
+	</template>
 
 	<template x-if="sheet">
 		<div class="sheet open" role="dialog" aria-modal="true" :aria-label="sheet.name">
 			<span class="sheet__title" x-text="sheet.name"></span>
 			<button class="sheet__item" x-show="sheet.kind" @click="preview(sheet)">
 				<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span>预览</span>
+			</button>
+			<button class="sheet__item" x-show="sheet.kind === 'text' || sheet.kind === 'markdown'" @click="editExisting(sheet)">
+				<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span>编辑</span>
 			</button>
 			<a class="sheet__item" :href="sheet.href" :download="sheet.name">
 				<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
@@ -670,7 +745,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 		</div>
 	</template>
 
-	<div class="viewer" :class="[viewer.open ? 'open' : '', 'viewer--' + viewer.kind]" role="dialog" aria-modal="true">
+	<div class="panel viewer" :class="[viewer.open ? 'open' : '', 'viewer--' + viewer.kind]" role="dialog" aria-modal="true">
 		<div class="viewer__bar">
 			<span class="viewer__title" x-text="viewer.title"></span>
 			<div class="viewer__actions">
@@ -684,7 +759,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 					title="下载" aria-label="下载">
 					<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>
 				</a>
-				<span class="viewer__sep" aria-hidden="true"></span>
+				<span class="panel__sep" aria-hidden="true"></span>
 				<button class="icon-btn" @click="closeViewer()" aria-label="关闭预览">
 					<svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
 				</button>
@@ -717,6 +792,39 @@ const PAGE_HTML = `<!DOCTYPE html>
 		</div>
 	</div>
 
+	<div class="panel editor" :class="{ open: editor.open }" role="dialog" aria-modal="true"
+		:aria-label="editor.href ? '编辑 ' + editor.name : '新建文本文件'">
+		<div class="editor__bar">
+			<span class="editor__title" x-text="editor.href ? editor.name : '新建文本文件'"></span>
+			<button class="btn" @click="saveEditor()" :disabled="editor.busy"
+				x-text="editor.busy ? '保存中…' : (editor.conflict ? '覆盖保存' : '保存')"></button>
+			<span class="panel__sep" aria-hidden="true"></span>
+			<button class="icon-btn" @click="requestCloseEditor()" aria-label="关闭编辑器">
+				<svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+			</button>
+		</div>
+		<div class="editor__body">
+			<label class="editor__field">
+				<span class="editor__label">文件名</span>
+				<input class="editor__input" type="text" x-model="editor.name" :readonly="!!editor.href"
+					placeholder="untitled.txt" autocomplete="off" autocapitalize="off" spellcheck="false">
+			</label>
+			<textarea class="editor__text" x-model="editor.text" spellcheck="false"
+				placeholder="在这里输入内容…" @input="editor.dirty = true"></textarea>
+			<p class="editor__error" x-show="editor.error" x-text="editor.error"></p>
+			<p class="editor__warn" x-show="editor.conflict">已存在同名文件，再点一次“覆盖保存”将替换其内容。</p>
+			<template x-if="editor.confirmDiscard">
+				<div class="editor__discard">
+					<span>有未保存的内容，确定放弃？</span>
+					<div class="sheet__actions">
+						<button class="btn btn--muted" @click="editor.confirmDiscard = false">继续编辑</button>
+						<button class="btn btn--danger" @click="discardEditor()">放弃</button>
+					</div>
+				</div>
+			</template>
+		</div>
+	</div>
+
 	<div class="dropzone" x-show="dragging" x-transition.opacity>松手即可上传到当前目录</div>
 	<div class="toast" x-show="toast" x-transition.opacity x-text="toast" role="status" aria-live="polite"></div>
 </div>
@@ -732,7 +840,9 @@ const PAGE_HTML = `<!DOCTYPE html>
 			toast: '',
 			sheet: null,
 			confirmTarget: null,
+			newMenu: false,
 			viewer: { open: false, entry: null, kind: '', title: '', href: '', status: 'loading', text: '', html: '', error: '' },
+			editor: { open: false, href: '', name: '', text: '', dirty: false, conflict: false, busy: false, error: '', confirmDiscard: false },
 
 			init() {
 				this.load();
@@ -741,6 +851,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 					if (event.key !== 'Escape') return;
 					if (this.confirmTarget) this.confirmTarget = null;
 					else if (this.sheet) this.sheet = null;
+					else if (this.newMenu) this.newMenu = false;
+					else if (this.editor.open) this.requestCloseEditor();
 					else if (this.viewer.open) this.closeViewer();
 				});
 			},
@@ -892,6 +1004,92 @@ const PAGE_HTML = `<!DOCTYPE html>
 				this.viewer.href = '';
 				this.viewer.html = '';
 				this.viewer.text = '';
+			},
+
+			/** 打开编辑器：不传参为新建，传入 { href, name, text } 则编辑已有文件。 */
+			openEditor(entry) {
+				this.newMenu = false;
+				this.sheet = null;
+				this.editor = {
+					open: true,
+					href: entry ? entry.href : '',
+					name: entry ? entry.name : 'untitled.txt',
+					text: entry ? entry.text : '',
+					dirty: false,
+					conflict: false,
+					busy: false,
+					error: '',
+					confirmDiscard: false,
+				};
+			},
+
+			/** 编辑已有文本文件：先取回内容再进编辑器。 */
+			async editExisting(entry) {
+				this.sheet = null;
+				try {
+					const response = await fetch(entry.href, { credentials: 'include' });
+					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+					this.openEditor({ href: entry.href, name: entry.name, text: await response.text() });
+				} catch (err) {
+					this.notify('打开失败：' + err.message);
+				}
+			},
+
+			requestCloseEditor() {
+				// 有未保存内容时先确认一次，避免误点关闭丢掉刚写的东西
+				if (this.editor.confirmDiscard) return this.discardEditor();
+				if (this.editor.dirty && this.editor.text) this.editor.confirmDiscard = true;
+				else this.discardEditor();
+			},
+
+			discardEditor() {
+				this.editor.open = false;
+				this.editor.confirmDiscard = false;
+				this.editor.text = '';
+			},
+
+			async saveEditor() {
+				const raw = this.editor.name.trim();
+				if (!raw) {
+					this.editor.error = '请填写文件名';
+					return;
+				}
+				// 这段 JS 处在 TS 模板字符串里，'\\\\' 输出的才是浏览器看到的 '\\'（单个反斜杠）
+				if (raw.includes('/') || raw.includes('\\\\')) {
+					this.editor.error = '文件名不能包含斜杠';
+					return;
+				}
+				// 没写扩展名时补 .txt，否则存完自己都预览不了
+				const name = raw.includes('.') ? raw : raw + '.txt';
+				const href = this.editor.href || location.pathname + encodeURIComponent(name);
+
+				this.editor.busy = true;
+				this.editor.error = '';
+				try {
+					// 新建时先探一下重名，避免默默覆盖掉已有文件
+					if (!this.editor.href && !this.editor.conflict) {
+						const probe = await fetch(href, { method: 'HEAD', credentials: 'include' });
+						if (probe.ok) {
+							this.editor.conflict = true;
+							this.editor.name = name;
+							return;
+						}
+					}
+					const response = await fetch(href, {
+						method: 'PUT',
+						body: this.editor.text,
+						credentials: 'include',
+						headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+					});
+					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+					this.discardEditor();
+					this.notify('已保存 ' + name);
+					await this.load();
+				} catch (err) {
+					this.editor.error = '保存失败：' + err.message;
+				} finally {
+					this.editor.busy = false;
+				}
 			},
 
 			async copyLink(entry) {
