@@ -862,7 +862,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			<!-- 编辑已有文件时标题已经显示文件名，且这里本来也不可改，就不重复占一行 -->
 			<label class="editor__field" x-show="!editor.href">
 				<span class="editor__label">文件名</span>
-				<input class="editor__input" type="text" x-model="editor.name"
+				<input class="editor__input" type="text" x-model="editor.name" @input="editor.conflict = false"
 					placeholder="untitled.txt" autocomplete="off" autocapitalize="off" spellcheck="false">
 			</label>
 			<textarea class="editor__text" x-model="editor.text" spellcheck="false"
@@ -1079,6 +1079,23 @@ const PAGE_HTML = `<!DOCTYPE html>
 				this.viewer.text = '';
 			},
 
+			/**
+			 * 新建文本文件时的默认名。
+			 *
+			 * 不再固定用 untitled.txt：那个名字只要已存在，新建流程就会立刻撞上重名，
+			 * 而“再点一次保存”确实会把它覆盖掉。这里直接在当前目录的条目里挑一个不冲突的
+			 * 名字（数据已经在手上，不需要额外请求）。
+			 */
+			default_new_name() {
+				const taken = new Set(this.entries.map((entry) => entry.name));
+				if (!taken.has('untitled.txt')) return 'untitled.txt';
+				for (let index = 2; index < 1000; index++) {
+					const candidate = 'untitled-' + index + '.txt';
+					if (!taken.has(candidate)) return candidate;
+				}
+				return 'untitled.txt';
+			},
+
 			/** 打开编辑器：不传参为新建，传入 { href, name, text } 则编辑已有文件。 */
 			openEditor(entry) {
 				this.newMenu = false;
@@ -1086,7 +1103,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 				this.editor = {
 					open: true,
 					href: entry ? entry.href : '',
-					name: entry ? entry.name : 'untitled.txt',
+					name: entry ? entry.name : this.default_new_name(),
 					text: entry ? entry.text : '',
 					// 编辑已有文件时沿用原 Content-Type，避免仅仅编辑一下就顺手改了它的元数据
 					contentType: (entry && entry.contentType) || null,
@@ -1141,7 +1158,9 @@ const PAGE_HTML = `<!DOCTYPE html>
 				this.editor.busy = true;
 				this.editor.error = '';
 				try {
-					// 新建时先探一下重名，避免默默覆盖掉已有文件
+					// 新建时先探一下重名，避免默默覆盖掉已有文件。
+					// conflict 在文件名变化时会被重置（见输入框上的 @input），所以这里的
+					// “再点一次就覆盖”只针对同一个文件名成立 —— 否则改个名字就能绕过检查。
 					if (!this.editor.href && !this.editor.conflict) {
 						const probe = await fetch(href, { method: 'HEAD', credentials: 'include' });
 						if (probe.ok) {
