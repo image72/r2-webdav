@@ -11,7 +11,15 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-import { PERFORMANCE_CONFIG, is_os_metadata_key, listDir, listRecursive, processWithConcurrencyLimit } from './r2';
+import {
+	PERFORMANCE_CONFIG,
+	decode_path,
+	encode_path,
+	is_os_metadata_key,
+	listDir,
+	listRecursive,
+	processWithConcurrencyLimit,
+} from './r2';
 import { handle_browse_request } from './ui';
 
 type DavProperties = {
@@ -71,9 +79,10 @@ function fromR2Object(object: R2Object | null | undefined): DavProperties {
 }
 
 function make_resource_path(request: Request): string {
-	let path = new URL(request.url).pathname.slice(1);
-	path = path.endsWith('/') ? path.slice(0, -1) : path;
-	return path;
+	const path = new URL(request.url).pathname.slice(1);
+	const trimmed = path.endsWith('/') ? path.slice(0, -1) : path;
+	// 存进 R2 的必须是真实文件名，而不是客户端发来的百分号编码形式
+	return decode_path(trimmed);
 }
 
 /** 去掉路径最后一段（父集合）；没有分隔符时返回空串，表示桶根。 */
@@ -156,7 +165,8 @@ function resolve_destination(request: Request, header: string | null): string | 
 		return new Response('Bad Gateway', { status: 502 });
 	}
 	let path = url.pathname.slice(1);
-	return path.endsWith('/') ? path.slice(0, -1) : path;
+	// Destination 同样是百分号编码的，必须解码后当 key 用
+	return decode_path(path.endsWith('/') ? path.slice(0, -1) : path);
 }
 
 /** 实体标签比较：Weak 比较（忽略 W/ 前缀），`*` 表示"资源存在"。 */
@@ -368,8 +378,14 @@ async function handle_put(request: Request, bucket: R2Bucket): Promise<Response>
 }
 
 async function handle_delete(request: Request, bucket: R2Bucket): Promise<Response> {
-	let resource_path = make_resource_path(request);
+	return delete_path(bucket, make_resource_path(request));
+}
 
+/**
+ * 按**已解码**的路径删除。单独抽出来给 MOVE 复用：MOVE 需要先删掉目标，
+ * 若通过"拼 URL 再重建 Request"的方式复用，含字面 `%` 的 key 会在反复编解码中错位。
+ */
+async function delete_path(bucket: R2Bucket, resource_path: string): Promise<Response> {
 	// 旧实现把 DELETE / 当成"清空整个 bucket"执行：任何客户端（包括同步软件的探测
 	// 请求）对根路径发一次 DELETE 就会不可逆地销毁全部数据。这里明确拒绝，
 	// 需要整桶清空请直接对 R2 bucket 操作。
@@ -453,7 +469,7 @@ async function handle_mkcol(request: Request, bucket: R2Bucket): Promise<Respons
 function generate_implicit_collection_response(key: string): string {
 	return `
 	<response>
-		<href>/${escape_xml(key)}/</href>
+		<href>/${escape_xml(encode_path(key))}/</href>
 		<propstat>
 			<prop>
 			${Object.entries(fromR2Object(null))
@@ -483,8 +499,8 @@ function generate_propfind_response(object: R2Object | null): string {
 	</response>`;
 	}
 
-	// href 里的 & 与 < 同样会破坏 XML，这里一并转义
-	let href = `/${escape_xml(object.key)}${object.customMetadata?.resourcetype === '<collection />' ? '/' : ''}`;
+	// href 必须按 RFC 3986 做百分号编码（空格、非 ASCII、& 等），否则客户端拿到的地址是错的
+	let href = `/${escape_xml(encode_path(object.key))}${object.customMetadata?.resourcetype === '<collection />' ? '/' : ''}`;
 	return `
 	<response>
 		<href>${href}</href>
@@ -656,7 +672,7 @@ async function handle_proppatch(request: Request, bucket: R2Bucket): Promise<Res
 	for (const propName in setProperties) {
 		responseXML += `
     <response>
-        <href>/${object.key}</href>
+        <href>/${encode_path(object.key)}</href>
         <propstat>
             <prop>
                 <${propName} />
@@ -669,7 +685,7 @@ async function handle_proppatch(request: Request, bucket: R2Bucket): Promise<Res
 	for (const propName of removeProperties) {
 		responseXML += `
     <response>
-        <href>/${object.key}</href>
+        <href>/${encode_path(object.key)}</href>
         <propstat>
             <prop>
                 <${propName} />
@@ -857,8 +873,8 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 	}
 
 	if (destination_exists) {
-		// Delete the destination first（用已校验过 host 的路径重建请求）
-		await handle_delete(new Request(new URL(`/${destination}`, request.url), request), bucket);
+		// Delete the destination first（destination 已经是解码后的路径）
+		await delete_path(bucket, destination);
 	}
 
 	const is_dir = resource.is_collection;

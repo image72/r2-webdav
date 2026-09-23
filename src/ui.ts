@@ -5,7 +5,7 @@
  * 协议实现（PROPFIND/PUT/COPY…）全部留在 webdav.ts，两边互不引用。
  */
 
-import { is_os_metadata_key, listDir } from './r2';
+import { decode_path, encode_path, is_os_metadata_key, listDir } from './r2';
 
 export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
 
@@ -117,8 +117,8 @@ function display_name(object: R2Object, prefix: string): string {
 		const matched = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(raw);
 		if (matched) return safe_decode(matched[1]);
 	}
-	// 浏览器与 WebDAV 客户端写入的 key 是百分号编码的，展示时解码还原
-	return safe_decode(object.key.slice(prefix.length));
+	// key 已经是解码后的真实文件名（见 r2.decode_path），无需再解码
+	return object.key.slice(prefix.length);
 }
 
 /**
@@ -140,10 +140,11 @@ async function list_entries(bucket: R2Bucket, dir: string): Promise<{ entries: B
 		}
 		const isDir = item.is_collection;
 		const relative = item.key.slice(prefix.length);
-		const name = item.object === null ? safe_decode(relative) : display_name(item.object, prefix);
+		const name = item.object === null ? relative : display_name(item.object, prefix);
 		entries.push({
 			name,
-			href: `/${item.key}${isDir ? '/' : ''}`,
+			// href 必须编码：key 里可能是空格、中文、& 等
+			href: `/${encode_path(item.key)}${isDir ? '/' : ''}`,
 			isDir,
 			kind: isDir ? null : preview_kind(name),
 			contentType: item.object?.httpMetadata?.contentType ?? null,
@@ -161,7 +162,8 @@ async function list_entries(bucket: R2Bucket, dir: string): Promise<{ entries: B
 
 function directory_path(pathname: string): string {
 	const trimmed = pathname.slice(1);
-	return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
+	// 浏览器发来的是编码后的路径，而 R2 里的 key 是真实文件名
+	return decode_path(trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed);
 }
 
 /** 目录请求：`?format=json` 给 Alpine 取数据，其余返回页面本身。 */

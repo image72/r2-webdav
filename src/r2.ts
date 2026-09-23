@@ -1,5 +1,33 @@
 // R2 访问的共享工具，被 WebDAV 层与页面层复用。
 
+/**
+ * 把请求路径里的百分号编码还原成真实文件名。
+ *
+ * 客户端按 RFC 3986 发送编码后的路径（空格 = `%20`，中文 = UTF-8 的 `%XX`），
+ * 而存进 R2 的应该是真实文件名。旧实现直接用 `URL.pathname`，于是 `my file.txt` 会以
+ * `my%20file.txt` 作为 key 存下来：R2 控制台、S3 API、`wrangler r2 object` 看到的
+ * 都是这串编码，与 WebDAV 侧的名字对不上。
+ *
+ * 逐段解码：`%2F` 在 URI 语义里并不是路径分隔符，整体解码会改变路径层级。
+ */
+export function decode_path(path: string): string {
+	return path
+		.split('/')
+		.map((segment) => {
+			try {
+				return decodeURIComponent(segment);
+			} catch {
+				return segment; // 非法百分号序列（如 `100%.txt`）按原样保留
+			}
+		})
+		.join('/');
+}
+
+/** 把 key 编码成合法的 href；与 decode_path 互逆，保证客户端拿到的 href 能原样请求回来。 */
+export function encode_path(path: string): string {
+	return path.split('/').map(encodeURIComponent).join('/');
+}
+
 // Performance configuration constants
 export const PERFORMANCE_CONFIG = {
 	MAX_OBJECTS_PER_REQUEST: 3000, // Limit for directory listings
