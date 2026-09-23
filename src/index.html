@@ -178,6 +178,13 @@
 				flex-direction: column;
 				gap: var(--sp-2);
 			}
+			/*
+			 * 长按行 = 弹出文件操作面板（等价于行尾的 ⋯）。
+			 * 必须先压掉 iOS 的原生行为，否则长按会弹出系统的「拷贝 / 查询」菜单，跟我们的面板打架：
+			 *   -webkit-touch-callout: none   禁止长按弹系统菜单
+			 *   -webkit-user-select: none     禁止长按选中文字
+			 * 注意**不要**碰 touch-action —— 设成 none 会把列表滚动一起废掉。
+			 */
 			.row {
 				display: grid;
 				grid-template-columns: minmax(0, 1fr) var(--tap);
@@ -188,8 +195,18 @@
 				background: var(--surface);
 				border: 1px solid var(--line);
 				border-radius: var(--r-md);
+				-webkit-touch-callout: none;
+				-webkit-user-select: none;
+				user-select: none;
 			}
 			.row:active {
+				background: var(--bg);
+			}
+			/*
+			 * 长按中的反馈。iOS 上 navigator.vibrate 不可用，给不了 3D Touch 那种触感，
+			 * 就只能靠底色变化：否则按住这 500ms 界面毫无反应，用户会以为手势没生效。
+			 */
+			.row--pressing {
 				background: var(--bg);
 			}
 			.row__main {
@@ -1063,8 +1080,16 @@
 						<li
 							class="row"
 							:id="'entry-row-' + index"
+							:class="{ 'row--pressing': pressAt && pressAt.name === entry.name }"
 							:data-entry-name="entry.name"
 							:data-entry-dir="entry.isDir ? 'true' : 'false'"
+							@pointerdown="pressDown(entry, $event)"
+							@pointermove="pressMove($event)"
+							@pointerup="pressUp()"
+							@pointercancel="pressUp()"
+							@pointerleave="pressUp()"
+							@click.capture="swallowPressClick($event)"
+							@contextmenu.prevent="selectEntry(entry)"
 						>
 							<button
 								class="row__main"
@@ -1616,6 +1641,11 @@
 			// 一个带内部状态的渲染器实例被代理后很容易出怪问题（而且白白变慢）。
 			let markdown_renderer = null;
 
+			// 长按判定：500ms 是 iOS 3D Touch / Android 长按的常规量级；
+			// 允许 10px 抖动，免得手指微不足道的移动就把长按取消掉。
+			const LONG_PRESS_MS = 500;
+			const LONG_PRESS_MOVE = 10;
+
 			function markdown_to_html(text) {
 				if (!markdown_renderer) {
 					markdown_renderer = window.markdownit({ html: true, linkify: true, typographer: true, breaks: true });
@@ -1633,6 +1663,11 @@
 					// 归档操作（打包 / 解压）进行中时持有 AbortController，否则为 null。
 					// 它既用来挡重入，也决定提示条上要不要出现「取消」——不需要额外的布尔标志。
 					archiveAbort: null,
+					// 长按手势的临时状态。pressTimer 非空表示“正在计时”；
+					// pressFired 表示这次长按已经弹过面板，用来吃掉松手时的那个 click。
+					pressTimer: null,
+					pressAt: null,
+					pressFired: false,
 					dragging: false,
 					toast: '',
 					sheet: null,
@@ -1689,6 +1724,69 @@
 					selectEntry(entry) {
 						this.commitRename();
 						this.sheet = entry;
+					},
+
+					/**
+					 * 长按（触屏 / 触控笔）弹出文件操作面板。
+					 *
+					 * 和行尾的 ⋯ 是同一件事，只多一个更顺手的手势。⋯ 必须保留 ——
+					 * 长按既不可发现、也没法用键盘或读屏触发，不能当成唯一入口。
+					 */
+					pressDown(entry, event) {
+						// 鼠标不参与：桌面端的等价物是右键，而且按住左键 500ms 弹菜单
+						// 会跟选词、拖拽抢事件
+						if (event.pointerType === 'mouse') return;
+						this.clearPressTimer();
+						this.pressAt = { name: entry.name, x: event.clientX, y: event.clientY };
+						// 每次按下都重置：pointerdown 一定先于 click，所以把上次长按的标记
+						// 在这里清掉，就不会有“卡住不消失、之后每次点击都被吞”的残留状态
+						this.pressFired = false;
+						this.pressTimer = setTimeout(() => {
+							this.pressTimer = null;
+							this.pressFired = true;
+							this.selectEntry(entry);
+						}, LONG_PRESS_MS);
+					},
+
+					/**
+					 * 手指移开就取消长按。
+					 *
+					 * 这条不能省：列表要能滑，不取消的话任何一次稍慢的扇动都会在停下时弹出面板。
+					 */
+					pressMove(event) {
+						if (this.pressTimer === null || !this.pressAt) return;
+						if (
+							Math.abs(event.clientX - this.pressAt.x) > LONG_PRESS_MOVE ||
+							Math.abs(event.clientY - this.pressAt.y) > LONG_PRESS_MOVE
+						) {
+							this.pressUp();
+						}
+					},
+
+					pressUp() {
+						this.clearPressTimer();
+						this.pressAt = null;
+					},
+
+					clearPressTimer() {
+						if (this.pressTimer !== null) {
+							clearTimeout(this.pressTimer);
+							this.pressTimer = null;
+						}
+					},
+
+					/**
+					 * 吃掉长按之后必然到来的那个 click。
+					 *
+					 * 少了这一步:「按住 → 弹出面板 → 松手」会顺便把文件也打开，面板被后面那次
+					 * click 顶掉 —— 用户看到的是菜单一闪而过。在**捕获阶段**拦，这样行内两个
+					 * 按钮的 @click 都不会收到事件。
+					 */
+					swallowPressClick(event) {
+						if (!this.pressFired) return;
+						this.pressFired = false;
+						event.preventDefault();
+						event.stopPropagation();
 					},
 
 					/**
