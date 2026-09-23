@@ -16,6 +16,94 @@ const PERFORMANCE_CONFIG = {
 	MAX_BATCH_DELETE_SIZE: 3000, // Maximum objects per batch delete
 } as const;
 
+// File extensions (and names) that can be previewed as text in the browser drawer.
+const TEXT_FILE_EXTENSIONS = new Set([
+	'js',
+	'mjs',
+	'cjs',
+	'jsx',
+	'ts',
+	'tsx',
+	'java',
+	'c',
+	'h',
+	'cc',
+	'cpp',
+	'cxx',
+	'hpp',
+	'hxx',
+	'cs',
+	'rs',
+	'go',
+	'py',
+	'rb',
+	'php',
+	'swift',
+	'kt',
+	'kts',
+	'scala',
+	'dart',
+	'lua',
+	'pl',
+	'r',
+	'sh',
+	'bash',
+	'zsh',
+	'fish',
+	'ps1',
+	'bat',
+	'cmd',
+	'sql',
+	'html',
+	'htm',
+	'xhtml',
+	'css',
+	'scss',
+	'sass',
+	'less',
+	'vue',
+	'svelte',
+	'xml',
+	'json',
+	'jsonc',
+	'yaml',
+	'yml',
+	'toml',
+	'ini',
+	'cfg',
+	'conf',
+	'env',
+	'properties',
+	'gradle',
+	'txt',
+	'text',
+	'log',
+	'csv',
+	'tsv',
+	'md',
+	'markdown',
+	'mdown',
+	'gitignore',
+	'dockerignore',
+	'editorconfig',
+	'lock',
+]);
+
+const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown']);
+const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg']);
+const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'ogv', 'mov', 'm4v', 'mkv', 'avi', '3gp']);
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'opus', 'weba', 'mid', 'midi']);
+
+// How a file should be previewed in the drawer, or null when it is not previewable.
+function previewKind(name: string): 'markdown' | 'text' | 'image' | 'video' | 'audio' | null {
+	const ext = name.includes('.') ? (name.split('.').pop() as string).toLowerCase() : '';
+	if (MARKDOWN_EXTENSIONS.has(ext)) return 'markdown';
+	if (IMAGE_EXTENSIONS.has(ext)) return 'image';
+	if (VIDEO_EXTENSIONS.has(ext)) return 'video';
+	if (AUDIO_EXTENSIONS.has(ext)) return 'audio';
+	return TEXT_FILE_EXTENSIONS.has(ext) ? 'text' : null;
+}
+
 export interface Env {
 	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
 	bucket: R2Bucket;
@@ -54,7 +142,11 @@ async function* listAll(bucket: R2Bucket, prefix: string, isRecursive: boolean =
 }
 
 // Utility function to process promises with concurrency limit
-async function processWithConcurrencyLimit<T>(items: T[], processor: (item: T) => Promise<void>, concurrencyLimit: number = PERFORMANCE_CONFIG.MAX_CONCURRENT_OPERATIONS): Promise<void> {
+async function processWithConcurrencyLimit<T>(
+	items: T[],
+	processor: (item: T) => Promise<void>,
+	concurrencyLimit: number = PERFORMANCE_CONFIG.MAX_CONCURRENT_OPERATIONS,
+): Promise<void> {
 	const results: Promise<void>[] = [];
 	for (let i = 0; i < items.length; i += concurrencyLimit) {
 		const batch = items.slice(i, i + concurrencyLimit);
@@ -150,11 +242,99 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 			if (isDirectory) {
 				page += `<a href="${href}">${fileName}</a><br>`;
 			} else {
-				page += `<div class="file-item clearfix"><a href="${href}">${fileName}</a><button class="delete-btn" onclick="deleteFile('/${object.key}', this)">✗</button></div>`;
+				const kind = previewKind(fileName);
+				const previewable = kind ? ` data-preview="${kind}"` : '';
+				page += `<div class="file-item clearfix"><a href="${href}"${previewable}>${fileName}</a><button class="delete-btn" onclick="deleteFile('/${object.key}', this)">✗</button></div>`;
 			}
 		}
 
 		// JavaScript functions
+		const previewDrawerFunction = `
+			function openDrawer(title) {
+				document.getElementById('drawer-title').textContent = title;
+				document.getElementById('drawer').classList.add('open');
+				document.getElementById('drawer-overlay').classList.add('open');
+			}
+
+			function closeDrawer() {
+				document.getElementById('drawer').classList.remove('open');
+				document.getElementById('drawer-overlay').classList.remove('open');
+			}
+
+			function loadScript(src) {
+				if (document.querySelector('script[src="' + src + '"]')) return Promise.resolve();
+				return new Promise((resolve, reject) => {
+					const script = document.createElement('script');
+					script.src = src;
+					script.onload = resolve;
+					script.onerror = reject;
+					document.head.appendChild(script);
+				});
+			}
+
+			async function openPreview(path, name, kind) {
+				const body = document.getElementById('drawer-body');
+				openDrawer(name);
+				body.className = 'drawer-body ' + kind;
+
+				// Media streams straight from the storage URL, no fetch/parse needed.
+				if (kind === 'image' || kind === 'video' || kind === 'audio') {
+					const element = document.createElement(kind === 'image' ? 'img' : kind);
+					element.onerror = () => (body.textContent = 'Failed to load preview: ' + name);
+					if (kind !== 'image') {
+						element.controls = true;
+						element.setAttribute('preload', 'metadata');
+						element.setAttribute('playsinline', '');
+					}
+					element.src = path;
+					body.replaceChildren(element);
+					return;
+				}
+
+				body.textContent = 'Loading...';
+				try {
+					const response = await fetch(path, { credentials: 'include' });
+					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+					const text = await response.text();
+
+					if (kind === 'markdown') {
+						await loadScript('https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js');
+						await loadScript('https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js');
+						const md = window.markdownit({ html: true, linkify: true, typographer: true, breaks: true });
+						body.innerHTML = md.render(text);
+						body.querySelectorAll('code.language-mermaid').forEach((block) => {
+							const div = document.createElement('div');
+							div.className = 'mermaid';
+							div.textContent = block.textContent;
+							block.parentNode.replaceWith(div);
+						});
+						window.mermaid.initialize({ startOnLoad: false });
+						await window.mermaid.run({ nodes: body.querySelectorAll('.mermaid') });
+					} else {
+						const pre = document.createElement('pre');
+						pre.className = 'plain';
+						pre.textContent = text;
+						body.replaceChildren(pre);
+					}
+				} catch (error) {
+					body.textContent = 'Failed to load preview: ' + error.message;
+				}
+			}
+
+			document.querySelectorAll('a[data-preview]').forEach((link) => {
+				link.addEventListener('click', (event) => {
+					event.preventDefault();
+					openPreview(link.getAttribute('href'), link.textContent, link.dataset.preview);
+				});
+			});
+
+			document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+			document.getElementById('drawer-overlay').addEventListener('click', closeDrawer);
+			document.addEventListener('keydown', (event) => {
+				if (event.key === 'Escape') closeDrawer();
+			});
+		`;
+
 		const deleteFileFunction = `
 			async function deleteFile(path, btn) {
 				if (!confirm('Are you sure you want to delete this file?')) return;
@@ -227,7 +407,7 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 			padding: 10px;
 			font-family: 'Segoe UI', 'Circular', 'Roboto', 'Lato', 'Helvetica Neue', 'Arial Rounded MT Bold', 'sans-serif';
 		}
-		a {
+		.file-list a {
 			display: inline-block;
 			width: calc(100% - 60px);
 			color: #000;
@@ -237,9 +417,9 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 			border-radius: 5px;
 			float: left;
 		}
-		a:hover { background-color: #60C590; color: white; }
-		a[href="../"] { background-color: #cbd5e1; width: 100%; }
-		a[href="../"]:after { content: ""; }
+		.file-list a:hover { background-color: #60C590; color: white; }
+		.file-list a[href="../"] { background-color: #cbd5e1; width: 100%; }
+		.file-list a[href="../"]:after { content: ""; }
 		.file-list {
 			display: flex;
 			flex-direction: column;
@@ -272,12 +452,113 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 			display: table;
 			clear: both;
 		}
+		.drawer-overlay {
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.35);
+			opacity: 0;
+			visibility: hidden;
+			transition: opacity 0.2s;
+			z-index: 100;
+		}
+		.drawer-overlay.open { opacity: 1; visibility: visible; }
+		.drawer {
+			position: fixed;
+			top: 0;
+			right: 0;
+			width: min(760px, 92vw);
+			height: 100%;
+			display: flex;
+			flex-direction: column;
+			background: #fff;
+			box-shadow: -2px 0 12px rgba(0, 0, 0, 0.15);
+			transform: translateX(100%);
+			transition: transform 0.25s;
+			z-index: 101;
+		}
+		.drawer.open { transform: translateX(0); }
+		.drawer-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 10px;
+			padding: 10px 14px;
+			border-bottom: 1px solid #e2e8f0;
+			font-weight: 600;
+			word-break: break-all;
+		}
+		.drawer-header button {
+			border: none;
+			background: transparent;
+			font-size: 16px;
+			cursor: pointer;
+			color: #64748b;
+		}
+		.drawer-body {
+			flex: 1;
+			overflow: auto;
+			padding: 14px;
+		}
+		.drawer-body.image, .drawer-body.video {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 0;
+		}
+		.drawer-body.image img, .drawer-body.video video {
+			width: 100%;
+			height: 100%;
+			object-fit: contain;
+		}
+		.drawer-body.audio {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+		.drawer-body.audio audio { width: 100%; }
+		.drawer-body pre.plain {
+			margin: 0;
+			white-space: pre-wrap;
+			word-break: break-word;
+			font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		}
+		.drawer-body pre:not(.plain) {
+			background: #f1f5f9;
+			padding: 10px;
+			border-radius: 6px;
+			overflow: auto;
+		}
+		.drawer-body code {
+			background: #f1f5f9;
+			padding: 1px 4px;
+			border-radius: 4px;
+			font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		}
+		.drawer-body pre code { background: none; padding: 0; }
+		.drawer-body blockquote {
+			margin: 0 0 12px;
+			padding-left: 12px;
+			border-left: 3px solid #cbd5e1;
+			color: #475569;
+		}
+		.drawer-body table { border-collapse: collapse; }
+		.drawer-body th, .drawer-body td { border: 1px solid #cbd5e1; padding: 4px 8px; }
+		.drawer-body img, .drawer-body svg { max-width: 100%; }
 	</style>
 </head>
 <body>
 	<h1>R2 Storage</h1>
 	<div class="file-list">${page}</div>
+	<div id="drawer-overlay" class="drawer-overlay"></div>
+	<aside id="drawer" class="drawer">
+		<div class="drawer-header">
+			<span id="drawer-title"></span>
+			<button id="drawer-close" title="Close">✕</button>
+		</div>
+		<div id="drawer-body" class="drawer-body"></div>
+	</aside>
 	<script>
+		${previewDrawerFunction}
 		${deleteFileFunction}
 		${dragUploadFunction}
 	</script>
@@ -313,28 +594,28 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 					...{ 'Content-Range': `bytes ${rangeOffset}-${rangeEnd}/${object.size}` },
 					...(object.httpMetadata?.contentDisposition
 						? {
-							'Content-Disposition': object.httpMetadata.contentDisposition,
-						}
+								'Content-Disposition': object.httpMetadata.contentDisposition,
+							}
 						: {}),
 					...(object.httpMetadata?.contentEncoding
 						? {
-							'Content-Encoding': object.httpMetadata.contentEncoding,
-						}
+								'Content-Encoding': object.httpMetadata.contentEncoding,
+							}
 						: {}),
 					...(object.httpMetadata?.contentLanguage
 						? {
-							'Content-Language': object.httpMetadata.contentLanguage,
-						}
+								'Content-Language': object.httpMetadata.contentLanguage,
+							}
 						: {}),
 					...(object.httpMetadata?.cacheControl
 						? {
-							'Cache-Control': object.httpMetadata.cacheControl,
-						}
+								'Cache-Control': object.httpMetadata.cacheControl,
+							}
 						: {}),
 					...(object.httpMetadata?.cacheExpiry
 						? {
-							'Cache-Expiry': object.httpMetadata.cacheExpiry.toISOString(),
-						}
+								'Cache-Expiry': object.httpMetadata.cacheExpiry.toISOString(),
+							}
 						: {}),
 				},
 			});
@@ -500,9 +781,9 @@ function generate_propfind_response(object: R2Object | null): string {
 		<propstat>
 			<prop>
 			${Object.entries(fromR2Object(object))
-			.filter(([_, value]) => value !== undefined)
-			.map(([key, value]) => `<${key}>${value}</${key}>`)
-			.join('\n				')}
+				.filter(([_, value]) => value !== undefined)
+				.map(([key, value]) => `<${key}>${value}</${key}>`)
+				.join('\n				')}
 			</prop>
 			<status>HTTP/1.1 200 OK</status>
 		</propstat>
