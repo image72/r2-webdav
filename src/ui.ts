@@ -425,6 +425,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.sheet__item .icon { color: var(--ink-60); }
 	.sheet__item--danger .icon { color: var(--danger); }
 	.sheet__item + .sheet__item { margin-top: var(--sp-1); }
+	/* 取消（退出类）与上面的删除拉开距离，避免想点取消却点到删除 */
+	.sheet__item.sheet__item--muted { margin-top: var(--sp-3); }
 	.sheet__actions { display: flex; gap: var(--sp-2); padding: var(--sp-3) 0 0; }
 	.sheet__actions .btn { flex: 1; }
 
@@ -449,8 +451,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 		border-bottom: 1px solid var(--line);
 	}
 	.viewer__title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	/* 防误触：相邻 44px 目标之间留 8px；危险操作与关闭之间再叠 8px 间距 + 分隔线，
-	   实际边缘距离 33px。删除按钮在触摸设备上也要能看出是危险操作（没有 hover 可用） */
+	/* 防误触：删除放最左、关闭放最右，中间隔着 复制链接/下载 与分隔线（边缘距离约 121px）；
+	   相邻 44px 目标之间留 8px。删除按钮在触摸设备上常态即红色（触屏没有 hover） */
 	.viewer__actions { display: flex; align-items: center; gap: var(--sp-2); }
 	.viewer__sep { width: 1px; height: 24px; background: var(--line); margin: 0 var(--sp-2); flex: none; }
 	.icon-btn--danger { color: var(--danger); }
@@ -673,16 +675,16 @@ const PAGE_HTML = `<!DOCTYPE html>
 		<div class="viewer__bar">
 			<span class="viewer__title" x-text="viewer.title"></span>
 			<div class="viewer__actions">
+				<button class="icon-btn icon-btn--danger" @click="askDelete(viewer.entry)" title="删除" aria-label="删除">
+					<svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg>
+				</button>
+				<button class="icon-btn" @click="copyLink(viewer.entry)" title="复制链接" aria-label="复制链接">
+					<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg>
+				</button>
 				<a class="icon-btn" :href="viewer.entry && viewer.entry.href" :download="viewer.entry && viewer.entry.name"
 					title="下载" aria-label="下载">
 					<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>
 				</a>
-				<button class="icon-btn" @click="copyLink(viewer.entry)" title="复制链接" aria-label="复制链接">
-					<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg>
-				</button>
-				<button class="icon-btn icon-btn--danger" @click="askDelete(viewer.entry)" title="删除" aria-label="删除">
-					<svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg>
-				</button>
 				<span class="viewer__sep" aria-hidden="true"></span>
 				<button class="icon-btn" @click="closeViewer()" aria-label="关闭预览">
 					<svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
