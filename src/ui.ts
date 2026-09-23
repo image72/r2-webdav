@@ -97,6 +97,7 @@ type BrowseEntry = {
 	href: string;
 	isDir: boolean;
 	kind: PreviewKind | null;
+	contentType: string | null;
 	size: number;
 	modified: string;
 };
@@ -136,6 +137,7 @@ async function list_entries(bucket: R2Bucket, dir: string): Promise<BrowseEntry[
 			href: `/${object.key}${isDir ? '/' : ''}`,
 			isDir,
 			kind: isDir ? null : preview_kind(name),
+			contentType: object.httpMetadata?.contentType ?? null,
 			size: object.size,
 			modified: object.uploaded.toISOString(),
 		});
@@ -511,7 +513,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 		flex-direction: column;
 		gap: var(--sp-2);
 		overflow-y: auto;
-		padding: var(--sp-4);
+		/*padding: var(--sp-4);*/
 	}
 	.editor__field { display: flex; flex-direction: column; gap: var(--sp-1); }
 	.editor__label { font-size: 13px; color: var(--ink-60); }
@@ -848,7 +850,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			confirmTarget: null,
 			newMenu: false,
 			viewer: { open: false, entry: null, kind: '', title: '', href: '', status: 'loading', text: '', html: '', error: '' },
-			editor: { open: false, href: '', name: '', text: '', dirty: false, conflict: false, busy: false, error: '', confirmDiscard: false },
+			editor: { open: false, href: '', name: '', text: '', contentType: null, dirty: false, conflict: false, busy: false, error: '', confirmDiscard: false },
 
 			init() {
 				this.load();
@@ -1021,6 +1023,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 					href: entry ? entry.href : '',
 					name: entry ? entry.name : 'untitled.txt',
 					text: entry ? entry.text : '',
+					// 编辑已有文件时沿用原 Content-Type，避免仅仅编辑一下就顺手改了它的元数据
+					contentType: (entry && entry.contentType) || null,
 					dirty: false,
 					conflict: false,
 					busy: false,
@@ -1035,7 +1039,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 				try {
 					const response = await fetch(entry.href, { credentials: 'include' });
 					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-					this.openEditor({ href: entry.href, name: entry.name, text: await response.text() });
+					this.openEditor({ href: entry.href, name: entry.name, text: await response.text(), contentType: entry.contentType });
 				} catch (err) {
 					this.notify('打开失败：' + err.message);
 				}
@@ -1085,7 +1089,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 						method: 'PUT',
 						body: this.editor.text,
 						credentials: 'include',
-						headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+						headers: { 'Content-Type': this.editor.contentType || 'text/plain; charset=utf-8' },
 					});
 					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 					this.discardEditor();
