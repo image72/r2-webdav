@@ -214,6 +214,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 	body.locked { overflow: hidden; }
 	button, input, a { font: inherit; color: inherit; }
 	:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+	/* 内联 SVG 图标统一尺寸与配色（fill 继承 currentColor） */
+	.icon { display: block; width: 20px; height: 20px; flex: none; fill: currentColor; }
 
 	.app { display: flex; flex-direction: column; min-height: 100dvh; }
 
@@ -298,6 +300,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 		text-align: left;
 		cursor: pointer;
 	}
+	/* 按类型给出色调，便于一眼区分目录/图片/媒体/文本/不可预览 */
 	.row__icon {
 		display: grid;
 		place-items: center;
@@ -305,16 +308,27 @@ const PAGE_HTML = `<!DOCTYPE html>
 		width: 40px;
 		height: 40px;
 		border-radius: var(--r-sm);
-		background: var(--accent-soft);
-		font-size: 18px;
+		background: var(--tone-soft, var(--bg));
+		color: var(--tone, var(--ink-60));
 	}
+	.row__icon .icon { width: 22px; height: 22px; }
+	.row__icon--folder { --tone: #047857; --tone-soft: #ecfdf5; }
+	.row__icon--image { --tone: #1d4ed8; --tone-soft: #eff6ff; }
+	.row__icon--video { --tone: #6d28d9; --tone-soft: #f5f3ff; }
+	.row__icon--audio { --tone: #b45309; --tone-soft: #fffbeb; }
+	.row__icon--markdown { --tone: #0e7490; --tone-soft: #ecfeff; }
+	.row__icon--text { --tone: #334155; --tone-soft: #f1f5f9; }
+	.row__icon--archive { --tone: #a16207; --tone-soft: #fefce8; }
+	.row__icon--file { --tone: #94a3b8; --tone-soft: #f8fafc; }
 	.row__text { min-width: 0; }
 	.row__name { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.row__meta { display: block; font-size: 13px; color: var(--ink-60); }
 
 	.skeleton { height: 64px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line); }
 	.state { padding: var(--sp-8) var(--sp-4); text-align: center; color: var(--ink-60); }
-	.state__emoji { display: block; font-size: 32px; margin-bottom: var(--sp-2); }
+	.state__icon { display: grid; place-items: center; width: 48px; height: 48px; margin: 0 auto var(--sp-3); color: var(--ink-60); }
+	.state__icon .icon { width: 40px; height: 40px; }
+	.state__actions { display: flex; justify-content: center; padding-top: var(--sp-4); }
 	.state--error { color: var(--danger); }
 
 	.btn {
@@ -359,7 +373,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.backdrop {
 		position: fixed;
 		inset: 0;
-		z-index: 40;
+		z-index: 65; /* 高于预览层，便于在预览里触发删除确认 */
 		background: rgba(15, 23, 42, 0.45);
 		opacity: 0;
 		visibility: hidden;
@@ -372,7 +386,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 		left: 0;
 		right: 0;
 		bottom: 0;
-		z-index: 50;
+		z-index: 66;
 		max-height: 85dvh;
 		overflow-y: auto;
 		padding: var(--sp-3) var(--sp-3) calc(var(--sp-3) + env(safe-area-inset-bottom));
@@ -407,6 +421,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.sheet__item:hover { background: var(--bg); }
 	.sheet__item--danger { color: var(--danger); }
 	.sheet__item--muted { color: var(--ink-60); justify-content: center; }
+	.sheet__item .icon { color: var(--ink-60); }
+	.sheet__item--danger .icon { color: var(--danger); }
 	.sheet__actions { display: flex; gap: var(--sp-2); padding: var(--sp-3) 0 0; }
 	.sheet__actions .btn { flex: 1; }
 
@@ -431,6 +447,9 @@ const PAGE_HTML = `<!DOCTYPE html>
 		border-bottom: 1px solid var(--line);
 	}
 	.viewer__title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.viewer__actions { display: flex; align-items: center; gap: var(--sp-1); }
+	.viewer__sep { width: 1px; height: 24px; background: var(--line); margin: 0 var(--sp-1); flex: none; }
+	.icon-btn--danger:hover { background: var(--danger-soft); color: var(--danger); }
 	.viewer__body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--sp-4); }
 	.viewer--image .viewer__body,
 	.viewer--video .viewer__body { display: flex; align-items: center; justify-content: center; padding: 0; }
@@ -495,7 +514,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 	@media (min-width: 640px) {
 		.content { max-width: 760px; margin: 0 auto; width: 100%; }
-		.crumbs { max-width: 760px; margin: 0 auto; }
+		/* 顶栏/面包屑保留整条背景与分隔线，只把内容对齐到 760px 主列 */
+		.app-bar, .crumbs { padding-left: max(var(--sp-4), calc((100% - 760px) / 2)); padding-right: max(var(--sp-4), calc((100% - 760px) / 2)); }
 		.sheet {
 			left: 50%;
 			right: auto;
@@ -514,6 +534,28 @@ const PAGE_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
+<!-- 图标：Material Design Icons（Apache-2.0，google/material-design-icons），内联为 sprite，
+     避免 emoji 在 Windows/Linux 上字形不一致，也省掉额外请求 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+	<symbol id="i-folder" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></symbol>
+	<symbol id="i-folder-open" viewBox="0 0 24 24"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></symbol>
+	<symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z"/></symbol>
+	<symbol id="i-image" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></symbol>
+	<symbol id="i-video" viewBox="0 0 24 24"><path d="m18 4 2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/></symbol>
+	<symbol id="i-audio" viewBox="0 0 24 24"><path d="M12 3v9.28a4.39 4.39 0 0 0-1.5-.28C8.01 12 6 14.01 6 16.5S8.01 21 10.5 21c2.31 0 4.2-1.75 4.45-4H15V6h4V3h-7z"/></symbol>
+	<symbol id="i-text" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></symbol>
+	<symbol id="i-markdown" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></symbol>
+	<symbol id="i-archive" viewBox="0 0 24 24"><path d="m20.54 5.23-1.39-1.68C18.88 3.21 18.47 3 18 3H6c-.47 0-.88.21-1.16.55L3.46 5.23C3.17 5.57 3 6.02 3 6.5V19c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V6.5c0-.48-.17-.93-.46-1.27zM12 17.5 6.5 12H10v-2h4v2h3.5L12 17.5zM5.12 5l.81-1h12l.94 1H5.12z"/></symbol>
+	<symbol id="i-upload" viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm0-10h4v6h6v-6h4l-7-7-7 7z"/></symbol>
+	<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></symbol>
+	<symbol id="i-close" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
+	<symbol id="i-more" viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></symbol>
+	<symbol id="i-eye" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></symbol>
+	<symbol id="i-download" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
+	<symbol id="i-link" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></symbol>
+	<symbol id="i-delete" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></symbol>
+	<symbol id="i-warning" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></symbol>
+</svg>
 <div class="app"
 	x-data="browser()"
 	x-init="init()"
@@ -524,7 +566,9 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 	<header class="app-bar">
 		<h1 class="app-bar__title">R2 Storage</h1>
-		<button class="icon-btn" @click="load()" :disabled="loading" title="刷新" aria-label="刷新">⟳</button>
+		<button class="icon-btn" @click="load()" :disabled="loading" title="刷新" aria-label="刷新">
+			<svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+		</button>
 	</header>
 
 	<nav class="crumbs" aria-label="路径">
@@ -546,35 +590,41 @@ const PAGE_HTML = `<!DOCTYPE html>
 		</div>
 
 		<div class="state state--error" x-show="!loading && error">
-			<span class="state__emoji">⚠️</span>
+			<span class="state__icon"><svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg></span>
 			<p x-text="error"></p>
-			<button class="btn btn--ghost" @click="load()">重试</button>
+			<div class="state__actions">
+				<button class="btn btn--ghost" @click="load()">重试</button>
+			</div>
 		</div>
 
 		<div class="state" x-show="!loading && !error && entries.length === 0">
-			<span class="state__emoji">📂</span>
+			<span class="state__icon"><svg class="icon" aria-hidden="true"><use href="#i-folder-open"></use></svg></span>
 			<p>这个目录还是空的</p>
-			<button class="btn btn--ghost" @click="pickerRef().click()">上传第一个文件</button>
+			<div class="state__actions">
+				<button class="btn btn--ghost" @click="pickerRef().click()">上传第一个文件</button>
+			</div>
 		</div>
 
 		<ul class="list" x-show="!loading && !error && entries.length > 0">
 			<template x-for="entry in entries" :key="entry.href">
 				<li class="row">
 					<button class="row__main" @click="open(entry)" :title="entry.name">
-						<span class="row__icon" x-text="iconFor(entry)"></span>
+						<span class="row__icon" :class="'row__icon--' + iconFor(entry)"><svg class="icon" aria-hidden="true"><use :href="'#i-' + iconFor(entry)"></use></svg></span>
 						<span class="row__text">
 							<span class="row__name" x-text="entry.name"></span>
 							<span class="row__meta" x-text="metaFor(entry)"></span>
 						</span>
 					</button>
-					<button class="icon-btn" @click="sheet = entry" :aria-label="'更多操作：' + entry.name">⋯</button>
+					<button class="icon-btn" @click="sheet = entry" :aria-label="'更多操作：' + entry.name">
+						<svg class="icon" aria-hidden="true"><use href="#i-more"></use></svg>
+					</button>
 				</li>
 			</template>
 		</ul>
 	</main>
 
 	<button class="fab" @click="pickerRef().click()">
-		<span aria-hidden="true">⬆️</span><span>上传</span>
+		<svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg><span>上传</span>
 	</button>
 	<input type="file" multiple x-ref="picker" @change="onPick($event)" aria-hidden="true" tabindex="-1"
 		style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
@@ -586,16 +636,16 @@ const PAGE_HTML = `<!DOCTYPE html>
 		<div class="sheet open" role="dialog" aria-modal="true" :aria-label="sheet.name">
 			<span class="sheet__title" x-text="sheet.name"></span>
 			<button class="sheet__item" x-show="sheet.kind" @click="preview(sheet)">
-				<span aria-hidden="true">👁</span><span>预览</span>
+				<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span>预览</span>
 			</button>
 			<a class="sheet__item" :href="sheet.href" :download="sheet.name">
-				<span aria-hidden="true">⬇️</span><span>下载</span>
+				<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
 			</a>
 			<button class="sheet__item" @click="copyLink(sheet)">
-				<span aria-hidden="true">🔗</span><span>复制链接</span>
+				<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg><span>复制链接</span>
 			</button>
-			<button class="sheet__item sheet__item--danger" @click="confirmTarget = sheet; sheet = null">
-				<span aria-hidden="true">🗑</span><span>删除</span>
+			<button class="sheet__item sheet__item--danger" @click="askDelete(sheet)">
+				<svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg><span>删除</span>
 			</button>
 			<button class="sheet__item sheet__item--muted" @click="sheet = null">取消</button>
 		</div>
@@ -617,7 +667,22 @@ const PAGE_HTML = `<!DOCTYPE html>
 	<div class="viewer" :class="[viewer.open ? 'open' : '', 'viewer--' + viewer.kind]" role="dialog" aria-modal="true">
 		<div class="viewer__bar">
 			<span class="viewer__title" x-text="viewer.title"></span>
-			<button class="icon-btn" @click="closeViewer()" aria-label="关闭预览">✕</button>
+			<div class="viewer__actions">
+				<a class="icon-btn" :href="viewer.entry && viewer.entry.href" :download="viewer.entry && viewer.entry.name"
+					title="下载" aria-label="下载">
+					<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>
+				</a>
+				<button class="icon-btn" @click="copyLink(viewer.entry)" title="复制链接" aria-label="复制链接">
+					<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg>
+				</button>
+				<button class="icon-btn icon-btn--danger" @click="askDelete(viewer.entry)" title="删除" aria-label="删除">
+					<svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg>
+				</button>
+				<span class="viewer__sep" aria-hidden="true"></span>
+				<button class="icon-btn" @click="closeViewer()" aria-label="关闭预览">
+					<svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
+				</button>
+			</div>
 		</div>
 		<div class="viewer__body" x-ref="viewerBody">
 			<template x-if="viewer.status === 'loading'">
@@ -661,7 +726,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			toast: '',
 			sheet: null,
 			confirmTarget: null,
-			viewer: { open: false, kind: '', title: '', href: '', status: 'loading', text: '', html: '', error: '' },
+			viewer: { open: false, entry: null, kind: '', title: '', href: '', status: 'loading', text: '', html: '', error: '' },
 
 			init() {
 				this.load();
@@ -703,8 +768,9 @@ const PAGE_HTML = `<!DOCTYPE html>
 			},
 
 			iconFor(entry) {
-				if (entry.isDir) return '📁';
-				return { image: '🖼', video: '🎬', audio: '🎵', markdown: '📝', text: '📄' }[entry.kind] || '📦';
+				if (entry.isDir) return 'folder';
+				if (entry.kind) return entry.kind;
+				return /\.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name) ? 'archive' : 'file';
 			},
 
 			metaFor(entry) {
@@ -744,7 +810,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 			async preview(entry) {
 				this.sheet = null;
-				this.viewer = { open: true, kind: entry.kind, title: entry.name, href: entry.href, status: 'loading', text: '', html: '', error: '' };
+				this.viewer = { open: true, entry, kind: entry.kind, title: entry.name, href: entry.href, status: 'loading', text: '', html: '', error: '' };
 
 				if (entry.kind !== 'text' && entry.kind !== 'markdown') {
 					this.viewer.status = 'ready';
@@ -807,12 +873,14 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 			closeViewer() {
 				this.viewer.open = false;
+				this.viewer.entry = null;
 				this.viewer.href = '';
 				this.viewer.html = '';
 				this.viewer.text = '';
 			},
 
 			async copyLink(entry) {
+				if (!entry) return;
 				const url = location.origin + entry.href;
 				this.sheet = null;
 				try {
@@ -823,6 +891,13 @@ const PAGE_HTML = `<!DOCTYPE html>
 				}
 			},
 
+			/** 删除前先落到统一的应用内确认面板（列表和预览层共用）。 */
+			askDelete(entry) {
+				if (!entry) return;
+				this.sheet = null;
+				this.confirmTarget = entry;
+			},
+
 			async remove() {
 				const target = this.confirmTarget;
 				this.busy = true;
@@ -830,6 +905,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 					const response = await fetch(target.href, { method: 'DELETE', credentials: 'include' });
 					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 					this.confirmTarget = null;
+					// 被删掉的正好是当前预览的文件时，一并关掉预览层
+					if (this.viewer.entry && this.viewer.entry.href === target.href) this.closeViewer();
 					this.notify('已删除 ' + target.name);
 					await this.load();
 				} catch (err) {
