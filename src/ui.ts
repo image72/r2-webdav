@@ -212,7 +212,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 		font: 400 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
 	}
 	body.locked { overflow: hidden; }
-	button, input, a { font: inherit; color: inherit; }
+	/* 移动端：去掉 300ms 双击缩放延迟与点击高亮 */
+	button, input, a { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 	:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 	/* 内联 SVG 图标统一尺寸与配色（fill 继承 currentColor） */
 	.icon { display: block; width: 20px; height: 20px; flex: none; fill: currentColor; }
@@ -423,6 +424,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.sheet__item--muted { color: var(--ink-60); justify-content: center; }
 	.sheet__item .icon { color: var(--ink-60); }
 	.sheet__item--danger .icon { color: var(--danger); }
+	.sheet__item + .sheet__item { margin-top: var(--sp-1); }
 	.sheet__actions { display: flex; gap: var(--sp-2); padding: var(--sp-3) 0 0; }
 	.sheet__actions .btn { flex: 1; }
 
@@ -447,8 +449,11 @@ const PAGE_HTML = `<!DOCTYPE html>
 		border-bottom: 1px solid var(--line);
 	}
 	.viewer__title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.viewer__actions { display: flex; align-items: center; gap: var(--sp-1); }
-	.viewer__sep { width: 1px; height: 24px; background: var(--line); margin: 0 var(--sp-1); flex: none; }
+	/* 防误触：相邻 44px 目标之间留 8px；危险操作与关闭之间再叠 8px 间距 + 分隔线，
+	   实际边缘距离 33px。删除按钮在触摸设备上也要能看出是危险操作（没有 hover 可用） */
+	.viewer__actions { display: flex; align-items: center; gap: var(--sp-2); }
+	.viewer__sep { width: 1px; height: 24px; background: var(--line); margin: 0 var(--sp-2); flex: none; }
+	.icon-btn--danger { color: var(--danger); }
 	.icon-btn--danger:hover { background: var(--danger-soft); color: var(--danger); }
 	.viewer__body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--sp-4); }
 	.viewer--image .viewer__body,
