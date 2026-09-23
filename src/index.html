@@ -1229,6 +1229,18 @@
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span>编辑</span>
 					</button>
+					<!-- 目录的「压缩」是**独立**的一处操作：它在当前目录生成真实的 <目录名>.zip 对象，
+					     与「解压」对称（解压产生对象，压缩也产生）。它和下面的「压缩下载」不是同一件事：
+					     一个把 zip 留在服务器上，一个只交到本地、服务器上什么都不留。 -->
+					<button
+						id="entry-compress-button"
+						class="sheet__item"
+						x-show="canCompress(sheet)"
+						@click="compressEntry(sheet)"
+						aria-label="Compress to ZIP"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg><span>压缩为 zip</span>
+					</button>
 					<a
 						id="entry-download-link"
 						class="sheet__item"
@@ -1237,13 +1249,9 @@
 						@click="downloadEntry(sheet, $event)"
 						:aria-label="sheet?.isDir ? 'Download as ZIP' : 'Download'"
 					>
-						<!-- 目录没有"原样下载"这回事，下载它就等于压缩成 zip（服务端不做 zip，全靠浏览器）。
-						     所以这里仍然只有一处操作，但**文字和图标必须跟着变** —— 否则用户看到的是
-						     「下载」，根本预期不到会拿到一个 zip 文件。文字与「解压」互为反义，图标用压缩包。 -->
-						<svg class="icon" aria-hidden="true">
-							<use x-show="!sheet?.isDir" href="#i-download"></use>
-							<use x-show="sheet?.isDir" href="#i-archive"></use>
-						</svg>
+						<!-- 目录没有"原样下载"这回事：下载它必然等于压缩后交给你，所以文字要说清楚，
+						     否则用户看到「下载」，根本预期不到会拿到一个 zip 文件。 -->
+						<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>
 						<span x-text="sheet?.isDir ? '压缩下载' : '下载'"></span>
 					</a>
 					<button
@@ -2006,15 +2014,37 @@
 					 * 接到提示条上，并把结果报出来。
 					 */
 					async zipFolder(entry) {
-						await this.runArchive('打包', async (signal, onProgress) => {
+						await this.runArchive('压缩', async (signal, onProgress) => {
 							const result = await window.R2Archive.downloadFolderAsZip(entry, { onProgress, signal });
-							this.notify('已打包 ' + result.files + ' 个文件');
+							this.notify('已压缩 ' + result.files + ' 个文件');
 						});
 					},
 
 					/** 只有 zip 能解压（JSZip 只认这一种格式）。 */
 					canExtract(entry) {
 						return !!entry && !entry.isDir && /\.zip$/i.test(entry.name);
+					},
+
+					/** 「压缩为 zip」只对目录有意义（文件本来就是文件）。 */
+					canCompress(entry) {
+						return !!entry && entry.isDir;
+					},
+
+					/**
+					 * 压缩为 zip：在当前目录生成真实的 `<目录名>.zip` 对象，**不下载**。
+					 *
+					 * 生成之后它就是个普通文件，想下载再点它（或直接用 Finder）。代价是整个 zip 要额
+					 * 外上传一遍，所以“只想拿走一份”应该用「压缩下载」而不是这个。
+					 */
+					async compressEntry(entry) {
+						// 改名还挂在半路时 href 已经过期，先等它落盘再放行
+						await this.settleRename();
+						this.sheet = null;
+						await this.runArchive('压缩', async (signal, onProgress) => {
+							const result = await window.R2Archive.storeFolderAsZip(entry, { onProgress, signal });
+							this.notify('已生成 ' + entry.name + '.zip（' + this.formatSize(result.bytes) + '）');
+							await this.load();
+						});
 					},
 
 					/** 解压到同名目录。实现全在 `src/archive.client.js` 里。 */
@@ -2032,8 +2062,8 @@
 					/**
 					 * 归档操作的公共外壳：挡重入、把进度接到提示条上、结束时收掉 AbortController。
 					 *
-					 * 打包和解压都是「多请求、非原子」的长任务，所以两者都提供真能停下来的取消
-					 * （解压取消时模块会把已经写进去的半成品目录删掉）。
+					 * 压缩（直接下载 / 生成到服务器）和解压都是「多请求、非原子」的长任务，
+					 * 所以三者都提供真能停下来的取消（失败或取消时，模块会把半成品清掉）。
 					 */
 					async runArchive(label, task) {
 						if (this.archiveAbort) return;

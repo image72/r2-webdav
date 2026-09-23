@@ -21,13 +21,16 @@
 	const JSZIP_URL = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
 
 	/**
-	 * 浏览器内打包的字节上限。
+	 * 压缩 / 解压的字节上限（80 MB）。想改上限只改这一处。
 	 *
-	 * JSZip 会把每个条目一直留在内存里，直到 generateAsync 结束，所以峰值内存大致等于
-	 * 目录总大小。没有上限的话，一个几百 MB 的目录能把标签页拖死（而不是报错）。
-	 * 超过就明确拒绝，让用户去打包子目录。
+	 * 两个方向都要限，因为成本都在浏览器内存里：压缩时 JSZip 会把所有条目一直留到
+	 * generateAsync 结束，解压时整个 zip 加上正在解开的条目也都在内存里。没有上限的话，
+	 * 一个几百 MB 的目录或压缩包能把标签页拖死（而不是报错）。
+	 *
+	 * 压缩按**目录内容总和**算，解压按**zip 文件本身的大小**算 —— 两者都只用列表接口
+	 * 已经拿到的公开信息（getcontentlength / size），不需要先下载再发现放不下。
 	 */
-	const ZIP_BYTE_LIMIT = 256 * 1024 * 1024;
+	const ZIP_BYTE_LIMIT = 80 * 1024 * 1024;
 
 	/**
 	 * 同时进行的请求数上限。
@@ -85,6 +88,21 @@
 	const encode_path = (path) => path.split('/').map(encodeURIComponent).join('/');
 
 	/**
+	 * 条目的**声明**解压后大小。
+	 *
+	 * JSZip 的公开 API 不暴露这个值，但它在 loadAsync 阶段就已经从中央目录解析出来了，
+	 * 放在 `_data.uncompressedSize`。这里读的是私有字段，所以做了防御：取不到就返回 null，
+	 * 退回“边解边算”的累计检查。
+	 *
+	 * 为什么必须提前知道：公开 API 只有 `async('blob')` 之后才能拿到大小，而那一步**已经**
+	 * 把内容解进内存了 —— 一个声明 5GB 的条目会先把标签页撑死，累计检查根本来不及跑。
+	 */
+	function declared_size(item) {
+		const size = item && item._data && item._data.uncompressedSize;
+		return typeof size === 'number' && Number.isFinite(size) ? size : null;
+	}
+
+	/**
 	 * 有界并发。
 	 *
 	 * 一个任务失败后不再取新任务，但要等**在途的**任务都收尾再抛错 —— 调用方失败后会
@@ -135,12 +153,12 @@
 	}
 
 	/**
-	 * 删除一个目录（递归）。
+	 * 删除一个资源（目录则递归）。
 	 *
 	 * 刻意**不接受 signal**：调用它时操作已经失败了，若是用户取消，signal 已经 abort，
-	 * 把 abort 传上去会让这条清理请求立刻失败，半成品目录就留在那儿了。
+	 * 把 abort 传上去会让这条清理请求立刻失败，半成品就留在那儿了。
 	 */
-	async function delete_tree(url) {
+	async function remove_path(url) {
 		try {
 			const response = await fetch(url, { method: 'DELETE', credentials: 'include' });
 			return response.ok;
@@ -234,13 +252,17 @@
 	}
 
 	/**
-	 * 把一个目录打包成 zip 交给浏览器下载。
+	 * 把一个目录打成 zip（全部在内存里）。
+	 *
+	 * 压缩与解压是**对称**的：这里保留目录本身这一层（和 Finder 的「压缩」一致），
+	 * 而 extract_zip_to_folder 在结构对得上时会把这一层收回去，所以
+	 * 「压缩 → 解压」能回到原样。
 	 *
 	 * @param {{ name: string, href: string }} entry
 	 * @param {{ onProgress?: (text: string) => void, signal?: AbortSignal }} hooks
-	 * @returns {Promise<{ files: number }>}
+	 * @returns {Promise<{ blob: Blob, files: number }>}
 	 */
-	async function download_folder_as_zip(entry, hooks) {
+	async function build_zip(entry, hooks) {
 		const onProgress = (hooks && hooks.onProgress) || function () {};
 		const signal = hooks && hooks.signal;
 
@@ -249,7 +271,9 @@
 
 		const total = tree.files.reduce((sum, file) => sum + file.size, 0);
 		if (total > ZIP_BYTE_LIMIT) {
-			throw new Error('共 ' + format_size(total) + '，超过 ' + format_size(ZIP_BYTE_LIMIT) + ' 的浏览器内打包上限');
+			throw new Error(
+				'目录内容共 ' + format_size(total) + '，超过 ' + format_size(ZIP_BYTE_LIMIT) + ' 的压缩上限，请分次压缩子目录',
+			);
 		}
 
 		const JSZip = await load_jszip();
@@ -276,8 +300,69 @@
 			onProgress('正在生成 zip… ' + Math.round(meta.percent) + '%');
 		});
 
-		save_blob(blob, entry.name + '.zip');
-		return { files: tree.files.length };
+		return { blob: blob, files: tree.files.length };
+	}
+
+	/**
+	 * 压缩并**直接下载**：zip 只在浏览器内存里存在一下就交出去，服务器上什么都不留。
+	 *
+	 * 这是「我要把目录拿走」的场景，代价最低：不占 R2、不留垃圾、不用清理。
+	 */
+	async function download_folder_as_zip(entry, hooks) {
+		const result = await build_zip(entry, hooks);
+		save_blob(result.blob, entry.name + '.zip');
+		return result;
+	}
+
+	/**
+	 * 压缩并在当前目录生成真实的 `<目录名>.zip` 对象（不下载）。
+	 *
+	 * 和 extract_zip_to_folder 对称 —— 解压会在服务器上产生对象，压缩也产生。生成之后
+	 * 它就是个普通文件：能下载、能复制链接、能被 Finder 挂载、能长期留作归档。
+	 *
+	 * 代价必须说清楚：整个 zip 要**额外上传一遍**（200MB 的目录就多传 200MB），所以它不
+	 * 适合「只想拿走一份」的场景，那种情况用 download_folder_as_zip。
+	 *
+	 * @param {{ name: string, href: string }} entry
+	 * @param {{ onProgress?: (text: string) => void, signal?: AbortSignal }} hooks
+	 * @returns {Promise<{ files: number, bytes: number, href: string }>}
+	 */
+	async function store_folder_as_zip(entry, hooks) {
+		const onProgress = (hooks && hooks.onProgress) || function () {};
+		const signal = hooks && hooks.signal;
+
+		// 目录 href 形如 `/a/b/`：zip 放进它的父目录，名字取目录名 + .zip
+		const base = strip_origin(entry.href).replace(/\/+$/, '');
+		const parent = base.slice(0, base.lastIndexOf('/') + 1);
+		const target = parent + encode_path(entry.name + '.zip');
+
+		// 与「解压」同样的理由：不覆盖已有对象，也不静默改名。宁可先拒绝。
+		const existing = await fetch(target, {
+			method: 'PROPFIND',
+			credentials: 'include',
+			signal,
+			headers: { Depth: '0', 'Content-Type': 'application/xml' },
+			body: PROPFIND_BODY,
+		});
+		if (existing.ok) {
+			throw new Error('已存在 ' + entry.name + '.zip，请先删除或改名');
+		}
+
+		const result = await build_zip(entry, hooks);
+		try {
+			onProgress('正在上传 ' + entry.name + '.zip…');
+			await put_object(target, result.blob, signal);
+		} catch (err) {
+			// 失败或取消就把它清掉。不清的话下次压缩会撞上「已存在」，而留下的那个对象
+			// 还可能是半截的 —— 一个失败的压缩会因此把重试也堵死。
+			const cleaned = await remove_path(target);
+			const suffix = cleaned
+				? '（已清掉不完整的 ' + entry.name + '.zip）'
+				: '（注意：服务器上可能留有 ' + entry.name + '.zip）';
+			if (signal && signal.aborted) throw new Error('已取消' + suffix);
+			throw new Error((err && err.message ? err.message : String(err)) + suffix);
+		}
+		return { files: result.files, bytes: result.blob.size, href: target };
 	}
 
 	/**
@@ -298,7 +383,7 @@
 		// 先用列表接口已有的公开信息挡掉超大压缩包，不必先下完再发现放不下
 		if (entry.size > ZIP_BYTE_LIMIT) {
 			throw new Error(
-				entry.name + ' 有 ' + format_size(entry.size) + '，超过 ' + format_size(ZIP_BYTE_LIMIT) + ' 的浏览器内解压上限',
+				entry.name + ' 有 ' + format_size(entry.size) + '，超过 ' + format_size(ZIP_BYTE_LIMIT) + ' 的解压上限',
 			);
 		}
 
@@ -321,6 +406,8 @@
 		// 分类条目，并把父目录补全（有些工具不写目录条目，只写完整路径）
 		const dirs = new Set();
 		let files = [];
+		// 所有条目声明的解压后大小之和；只要有一个取不到就置 null（退回累计检查）
+		let declared_total = 0;
 		const add_dir = (path) => {
 			const parts = path.split('/').filter(Boolean);
 			let acc = '';
@@ -348,8 +435,20 @@
 			// 只存一个的话，剥过名字的条目会再也取不到内容（zip.files[path] 是 undefined）。
 			files.push({ path: clean, key: name });
 			add_dir(clean.split('/').slice(0, -1).join('/'));
+
+			const size = declared_size(item);
+			if (size === null) declared_total = null;
+			else if (declared_total !== null) declared_total += size;
 		}
 		if (files.length === 0 && dirs.size === 0) throw new Error('这个 zip 里没有任何条目');
+
+		// 在**解压任何东西之前**就按声明大小挡掉。这一条比下面的累计检查重要得多：
+		// 累计检查要等条目已经解进内存才会触发，压綦炸弹那时已经生效了。
+		if (declared_total !== null && declared_total > ZIP_BYTE_LIMIT) {
+			throw new Error(
+				'解压后约 ' + format_size(declared_total) + '，超过 ' + format_size(ZIP_BYTE_LIMIT) + ' 的解压上限，拒绝解压',
+			);
+		}
 
 		// download_folder_as_zip 会保留目录本身这一层，所以原样展开会让 deep.zip 变成
 		// deep/deep/… —— 往返一次就多一层。当所有条目都落在唯一一个与 zip 同名的顶层目录下时
@@ -410,7 +509,7 @@
 				onProgress('解压中 ' + done + '/' + files.length + '…');
 			});
 		} catch (err) {
-			const cleaned = await delete_tree(target);
+			const cleaned = await remove_path(target);
 			const suffix = cleaned ? '（已清掉不完整的目录）' : '（注意：' + base_name + '/ 里可能留有内容不完整的残留）';
 			if (signal && signal.aborted) throw new Error('已取消' + suffix);
 			throw new Error((err && err.message ? err.message : String(err)) + suffix);
@@ -421,7 +520,7 @@
 
 	window.R2Archive = {
 		downloadFolderAsZip: download_folder_as_zip,
+		storeFolderAsZip: store_folder_as_zip,
 		extractZipToFolder: extract_zip_to_folder,
-		ZIP_BYTE_LIMIT: ZIP_BYTE_LIMIT,
 	};
 })();
