@@ -702,6 +702,16 @@
 				text-overflow: ellipsis;
 				white-space: nowrap;
 			}
+			/*
+			 * 「未保存」标记。dirty 原来只用来决定要不要弹「放弃」确认，界面上完全看不出来 ——
+			 * 而「查看」渲染的正是**未保存**的内容，不给标记的话用户会以为文件已经改好了。
+			 */
+			.editor__dirty {
+				flex: none;
+				font-size: 12px;
+				color: var(--ink-60);
+				white-space: nowrap;
+			}
 			.editor__body {
 				flex: 1;
 				min-height: 0;
@@ -1479,6 +1489,9 @@
 			>
 				<div class="editor__bar">
 					<span class="editor__title" x-text="editor.href ? editor.name : '新建文本文件'"></span>
+					<span id="editor-dirty-marker" class="editor__dirty" x-show="editor.dirty" aria-label="Unsaved changes">
+						未保存
+					</span>
 					<!-- 「查看」放在保存旁边，但**不关掉编辑器**：改一改 → 看一眼 → 再改，
 					     每次想看效果都得先保存一次（真的写服务器）太别扭了。 -->
 					<button
@@ -2199,6 +2212,10 @@
 						this.editor.open = false;
 						this.editor.confirmDiscard = false;
 						this.editor.text = '';
+						// 关闭即丢弃：dirty / conflict 都失去意义，留着只会变成下一轮的隐患
+						// （conflict 是“用户已确认覆盖”类标记，换一个文件就不该还成立）
+						this.editor.dirty = false;
+						this.editor.conflict = false;
 						// 只有真正关掉编辑器才丢掉已渲染的内容：在编辑 ⇄ 查看之间来回切不丢，
 						// 否则每次切回查看都要重新渲染一遍（mermaid 图会闪一下）。
 						this.editor.preview = false;
