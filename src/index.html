@@ -1119,7 +1119,7 @@
 				</ul>
 			</main>
 
-			<button id="new-button" class="fab" @click="newMenu = true" aria-label="New">
+			<button id="new-button" class="fab" @click="openNewMenu()" aria-label="New">
 				<svg class="icon" aria-hidden="true"><use href="#i-add"></use></svg><span>新建</span>
 			</button>
 			<input
@@ -1653,6 +1653,26 @@
 				return markdown_renderer.render(text);
 			}
 
+			/**
+			 * 触感反馈。
+			 *
+			 * `navigator.vibrate` 只有 Android Chrome 这类才有；**iOS Safari 没有这个 API**
+			 * （所以长按那里必须有视觉替代 —— 不能把反馈全押在震动上），桌面浏览器一般也没有。
+			 * 不支持就静默跳过：这只是增强，任何情况下都不应该影响操作本身。
+			 *
+			 * 时长/节奏用来区分「分量」：轻点最短，按住略重，完成两下，失败两下更重更长。
+			 * 都做一样长的话，用户分不出刚刚是成功了还是出错了。
+			 */
+			const HAPTIC = { tap: 8, press: 16, done: [12, 40, 24], error: [28, 60, 28] };
+
+			function buzz(kind) {
+				try {
+					if (typeof navigator.vibrate === 'function') navigator.vibrate(HAPTIC[kind] || HAPTIC.tap);
+				} catch {
+					// 个别 WebView 会直接抛；反馈失败绝不能让主流程跟着一起失败
+				}
+			}
+
 			window.browser = function () {
 				return {
 					entries: [],
@@ -1721,9 +1741,17 @@
 					},
 
 					/** 选中某个条目的操作面板。换条目之前先把待提交的改名落盘。 */
-					selectEntry(entry) {
+					/**
+					 * 弹出文件操作面板。
+					 *
+					 * kind 用来区分“怎么打开的”：长按识别成功应该比轻点 ⋯ 重一点 —— 那是触屏上
+					 * 唯一能替 3D Touch 给的反馈。注意不能先 buzz('press') 再让这里 buzz('tap')：
+					 * 新的一次 vibrate() 会取消上一次，后调的会把前面的盖掉。
+					 */
+					selectEntry(entry, kind) {
 						this.commitRename();
 						this.sheet = entry;
+						buzz(kind || 'tap');
 					},
 
 					/**
@@ -1744,7 +1772,7 @@
 						this.pressTimer = setTimeout(() => {
 							this.pressTimer = null;
 							this.pressFired = true;
-							this.selectEntry(entry);
+							this.selectEntry(entry, 'press');
 						}, LONG_PRESS_MS);
 					},
 
@@ -1901,6 +1929,7 @@
 					async preview(entry) {
 						// 改名可能还在落盘：entry 的 href 会在成功后就地更新，先等它，否则预览会去取旧路径
 						await this.settleRename();
+						buzz('tap');
 						this.sheet = null;
 						this.viewer = {
 							open: true,
@@ -1997,8 +2026,15 @@
 						return 'untitled.txt';
 					},
 
+					/** 打开「新建」菜单。单独抽一个方法只为了让触感有个落脚点。 */
+					openNewMenu() {
+						buzz('tap');
+						this.newMenu = true;
+					},
+
 					/** 打开新建目录面板：默认名同样从已有条目里挑一个不冲突的。 */
 					openFolder() {
+						buzz('tap');
 						this.newMenu = false;
 						this.sheet = null;
 						this.folder = { open: true, name: this.default_folder_name(), busy: false, error: '' };
@@ -2049,10 +2085,11 @@
 							});
 							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 							this.folder.open = false;
-							this.notify('已创建目录 ' + name);
+							this.notify('已创建目录 ' + name, 'done');
 							await this.load();
 						} catch (err) {
 							this.folder.error = '创建失败：' + err.message;
+							buzz('error');
 						} finally {
 							this.folder.busy = false;
 						}
@@ -2136,9 +2173,9 @@
 							});
 							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 							this.applyRename(entry, old_href, name, new_href);
-							this.notify('已重命名为 ' + name);
+							this.notify('已重命名为 ' + name, 'done');
 						} catch (err) {
-							this.notify('重命名失败：' + err.message);
+							this.notify('重命名失败：' + err.message, 'error');
 						} finally {
 							this.rename.pending = null;
 						}
@@ -2175,6 +2212,7 @@
 						event.preventDefault();
 						await this.settleRename();
 						if (entry.isDir) return this.zipFolder(entry);
+						buzz('tap');
 						const link = document.createElement('a');
 						link.href = entry.href;
 						link.download = entry.name;
@@ -2190,7 +2228,7 @@
 					async zipFolder(entry) {
 						await this.runArchive('压缩', async (signal, onProgress) => {
 							const result = await window.R2Archive.downloadFolderAsZip(entry, { onProgress, signal });
-							this.notify('已压缩 ' + result.files + ' 个文件');
+							this.notify('已压缩 ' + result.files + ' 个文件', 'done');
 						});
 					},
 
@@ -2216,7 +2254,7 @@
 						this.sheet = null;
 						await this.runArchive('压缩', async (signal, onProgress) => {
 							const result = await window.R2Archive.storeFolderAsZip(entry, { onProgress, signal });
-							this.notify('已生成 ' + entry.name + '.zip（' + this.formatSize(result.bytes) + '）');
+							this.notify('已生成 ' + entry.name + '.zip（' + this.formatSize(result.bytes) + '）', 'done');
 							await this.load();
 						});
 					},
@@ -2228,7 +2266,7 @@
 						this.sheet = null;
 						await this.runArchive('解压', async (signal, onProgress) => {
 							const result = await window.R2Archive.extractZipToFolder(entry, { onProgress, signal });
-							this.notify('已解压 ' + result.files + ' 个文件到 ' + entry.name.replace(/\.zip$/i, '') + '/');
+							this.notify('已解压 ' + result.files + ' 个文件到 ' + entry.name.replace(/\.zip$/i, '') + '/', 'done');
 							await this.load();
 						});
 					},
@@ -2243,11 +2281,16 @@
 						if (this.archiveAbort) return;
 						const controller = new AbortController();
 						this.archiveAbort = controller;
+						// 长任务的起点也给一次轻反馈：后面的几秒都没动静，得先确认“按到了”
+						buzz('tap');
 						try {
 							await task(controller.signal, (text) => this.notifySticky(text));
 						} catch (err) {
 							// 用户主动取消不该被说成「失败」，原样把模块的说明（含清理结果）转出来
-							this.notify(controller.signal.aborted ? err.message : label + '失败：' + err.message);
+							this.notify(
+								controller.signal.aborted ? err.message : label + '失败：' + err.message,
+								controller.signal.aborted ? 'tap' : 'error',
+							);
 						} finally {
 							this.archiveAbort = null;
 						}
@@ -2267,6 +2310,7 @@
 
 					/** 打开编辑器：不传参为新建，传入 { href, name, text } 则编辑已有文件。 */
 					openEditor(entry) {
+						buzz('tap');
 						this.newMenu = false;
 						this.sheet = null;
 						this.editor = {
@@ -2301,7 +2345,7 @@
 								contentType: entry.contentType,
 							});
 						} catch (err) {
-							this.notify('打开失败：' + err.message);
+							this.notify('打开失败：' + err.message, 'error');
 						}
 					},
 
@@ -2397,10 +2441,11 @@
 							});
 							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 							this.discardEditor();
-							this.notify('已保存 ' + name);
+							this.notify('已保存 ' + name, 'done');
 							await this.load();
 						} catch (err) {
 							this.editor.error = '保存失败：' + err.message;
+							buzz('error');
 						} finally {
 							this.editor.busy = false;
 						}
@@ -2413,7 +2458,7 @@
 						this.sheet = null;
 						try {
 							await navigator.clipboard.writeText(url);
-							this.notify('链接已复制');
+							this.notify('链接已复制', 'tap');
 						} catch {
 							this.notify(url);
 						}
@@ -2422,6 +2467,7 @@
 					/** 删除前先落到统一的应用内确认面板（列表和预览层共用）。 */
 					askDelete(entry) {
 						if (!entry) return;
+						buzz('tap');
 						this.sheet = null;
 						this.confirmTarget = entry;
 					},
@@ -2435,10 +2481,10 @@
 							this.confirmTarget = null;
 							// 被删掉的正好是当前预览的文件时，一并关掉预览层
 							if (this.viewer.entry && this.viewer.entry.href === target.href) this.closeViewer();
-							this.notify('已删除 ' + target.name);
+							this.notify('已删除 ' + target.name, 'done');
 							await this.load();
 						} catch (err) {
-							this.notify('删除失败：' + err.message);
+							this.notify('删除失败：' + err.message, 'error');
 						} finally {
 							this.busy = false;
 						}
@@ -2481,7 +2527,7 @@
 								done++;
 							} catch (err) {
 								this.busy = false;
-								this.notify('上传失败 ' + file.name + '：' + err.message);
+								this.notify('上传失败 ' + file.name + '：' + err.message, 'error');
 								await this.load();
 								return;
 							}
@@ -2519,7 +2565,8 @@
 
 						if (pending.length > 0) {
 							this.uploadConflicts = pending;
-							if (done > 0) this.notify('已上传 ' + done + ' 个文件');
+							buzz('tap');
+							if (done > 0) this.notify('已上传 ' + done + ' 个文件', 'done');
 							await this.load();
 							return;
 						}
@@ -2529,7 +2576,7 @@
 						const parts = [];
 						if (done > 0) parts.push('已上传 ' + done + ' 个文件');
 						if (blocked.length > 0) parts.push('跳过同名目录：' + blocked.map((file) => file.name).join('、'));
-						this.notify(parts.length > 0 ? parts.join('；') : '没有文件被上传');
+						this.notify(parts.length > 0 ? parts.join('；') : '没有文件被上传', parts.length > 0 ? 'done' : 'error');
 						await this.load();
 					},
 
@@ -2551,7 +2598,8 @@
 						this.toast = message;
 					},
 
-					notify(message) {
+					notify(message, kind) {
+						if (kind) buzz(kind);
 						this.toast = message;
 						clearTimeout(this.toastTimer);
 						this.toastTimer = setTimeout(() => (this.toast = ''), 2400);
