@@ -450,6 +450,30 @@ const PAGE_HTML = `<!DOCTYPE html>
 	/* 新建目录面板：标题自带 --sp-3 内缩，输入框与错误行跟着对齐 */
 	.sheet--new-folder .editor__field { padding: 0 var(--sp-3); }
 	.sheet--new-folder .editor__error { padding: var(--sp-2) var(--sp-3) 0; }
+	/* 标题即改名入口：不新增按钮，靠标题本身承载（面板宽 366px，比预览栏的 133px 宽得多） */
+	.sheet__title--edit {
+		display: block;
+		width: 100%;
+		border: 0;
+		border-radius: var(--r-sm);
+		background: none;
+		text-align: left;
+		cursor: text;
+	}
+	.sheet__title--edit:hover { background: var(--bg); }
+	.sheet__rename-input {
+		width: 100%;
+		min-height: var(--tap);
+		padding: var(--sp-3);
+		border: 1px solid var(--accent);
+		border-radius: var(--r-md);
+		background: var(--surface);
+		color: var(--ink);
+		font: inherit;
+		font-weight: 600;
+		font-size: 16px; /* ≥16px，避免 iOS 聚焦输入框时自动放大页面 */
+	}
+	.sheet__rename-error { padding: var(--sp-2) var(--sp-3) 0; }
 	.sheet__list {
 		margin: 0;
 		padding: 0 var(--sp-3) var(--sp-4);
@@ -720,7 +744,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 							<span class="row__meta" x-text="metaFor(entry)"></span>
 						</span>
 					</button>
-					<button class="icon-btn row__more" :id="'entry-more-' + index" @click="sheet = entry"
+					<button class="icon-btn row__more" :id="'entry-more-' + index" @click="selectEntry(entry)"
 						:aria-label="'Actions for ' + entry.name">
 						<svg class="icon" aria-hidden="true"><use href="#i-more"></use></svg>
 					</button>
@@ -737,7 +761,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 	<div id="backdrop" class="backdrop" aria-hidden="true"
 		:class="{ open: !!(sheet || confirmTarget || newMenu || folder.open || editor.open || uploadConflicts) }"
-		@click="sheet = null; confirmTarget = null; newMenu = false; folder.open = false; uploadConflicts = null"></div>
+		@click="closeAllPanels()"></div>
 
 	<template x-if="newMenu">
 		<div id="new-menu-panel" class="sheet sheet--new open" role="dialog" aria-modal="true" aria-label="New">
@@ -771,7 +795,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			<label class="editor__field">
 				<span class="editor__label">目录名</span>
 				<input id="folder-name-input" class="editor__input" type="text" x-model="folder.name"
-					@keydown.enter.prevent="createFolder()" aria-label="Folder name" placeholder="new-folder"
+					@keydown.enter.prevent="createFolder()" aria-label="new Folder name" placeholder="new-folder"
 					autocomplete="off" autocapitalize="off" spellcheck="false">
 			</label>
 			<p class="editor__error" x-show="folder.error" x-text="folder.error"></p>
@@ -785,15 +809,31 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 	<template x-if="sheet">
 		<div id="entry-actions-panel" class="sheet sheet--entry open" role="dialog" aria-modal="true"
-			:aria-label="'Actions for ' + sheet.name">
-			<span class="sheet__title" x-text="sheet.name"></span>
-			<button id="entry-preview-button" class="sheet__item" x-show="sheet.kind" @click="preview(sheet)" aria-label="Preview">
+			:aria-label="'Actions for ' + (sheet?.name ?? '')">
+			<!--
+				标题就是改名入口，不额外加按钮。
+				目录不开放改名：目录改名是递归重写它底下每一个 key，不在这轮范围内。
+
+				注意：这里每一处 sheet.* 都要带 ?. —— 面板是 x-if 渲染的，Alpine 在把子树
+				拆掉的瞬间 sheet 已经变成 null，而表达式还会被求值一次，直接写 sheet.isDir 会报错。
+			-->
+			<button id="entry-title-button" class="sheet__title sheet__title--edit" type="button"
+				x-show="!sheet?.isDir && !rename.active" @click="enterRename()" title="点击重命名"
+				:aria-label="'Rename ' + (sheet?.name ?? '')"><span x-text="sheet?.name ?? ''"></span></button>
+			<span class="sheet__title" x-show="sheet?.isDir" x-text="sheet?.name ?? ''"></span>
+			<input id="rename-input" class="sheet__rename-input" type="text" x-show="rename.active"
+				x-model="rename.draft" @keydown.enter.prevent="commitRename()"
+				@keydown.escape.stop.prevent="cancelRename()" @blur="commitRename()"
+				aria-label="New file name" autocomplete="off" autocapitalize="off" spellcheck="false">
+			<p class="editor__error sheet__rename-error" x-show="rename.error" x-text="rename.error"></p>
+			<button id="entry-preview-button" class="sheet__item" x-show="sheet?.kind" @click="preview(sheet)" aria-label="Preview">
 				<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span>预览</span>
 			</button>
 			<button id="entry-edit-button" class="sheet__item" x-show="canEdit(sheet)" @click="editExisting(sheet)" aria-label="Edit">
 				<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span>编辑</span>
 			</button>
-			<a id="entry-download-link" class="sheet__item" :href="sheet.href" :download="sheet.name" aria-label="Download">
+			<a id="entry-download-link" class="sheet__item" :href="sheet?.href" :download="sheet?.name"
+				@click="downloadEntry(sheet, $event)" aria-label="Download">
 				<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
 			</a>
 			<button id="entry-copy-link-button" class="sheet__item" @click="copyLink(sheet)" aria-label="Copy link">
@@ -943,6 +983,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			uploadConflicts: null,
 			newMenu: false,
 			folder: { open: false, name: '', busy: false, error: '' },
+			rename: { active: false, original: '', draft: '', error: '', pending: null },
 			viewer: { open: false, entry: null, kind: '', title: '', href: '', status: 'loading', text: '', html: '', error: '' },
 			editor: { open: false, href: '', name: '', text: '', contentType: null, dirty: false, conflict: false, busy: false, error: '', confirmDiscard: false },
 
@@ -953,12 +994,35 @@ const PAGE_HTML = `<!DOCTYPE html>
 					if (event.key !== 'Escape') return;
 					if (this.confirmTarget) this.confirmTarget = null;
 					else if (this.uploadConflicts) this.uploadConflicts = null;
-					else if (this.sheet) this.sheet = null;
+					else if (this.sheet) this.closeAllPanels();
 					else if (this.folder.open) this.folder.open = false;
 					else if (this.newMenu) this.newMenu = false;
 					else if (this.editor.open) this.requestCloseEditor();
 					else if (this.viewer.open) this.closeViewer();
 				});
+			},
+
+			/** 选中某个条目的操作面板。换条目之前先把待提交的改名落盘。 */
+			selectEntry(entry) {
+				this.commitRename();
+				this.sheet = entry;
+			},
+
+			/**
+			 * 关闭全部面板。
+			 *
+			 * 这里是“点别处 = 保存”的着力点：不能指望 @blur —— 面板是 x-if 渲染的，
+			 * 元素被移出 DOM 时浏览器不补发 blur/focusout（两者实测都不触发）；
+			 * 而在本项目环境里“点非聚焦元素”也不会让输入框失焦。所以每个关闭或切换
+			 * 面板的路径都显式提交一次；值没变则一个请求都不发。
+			 */
+			closeAllPanels() {
+				this.commitRename();
+				this.sheet = null;
+				this.confirmTarget = null;
+				this.newMenu = false;
+				this.folder.open = false;
+				this.uploadConflicts = null;
 			},
 
 			async load() {
@@ -1054,6 +1118,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 			},
 
 			async preview(entry) {
+				// 改名可能还在落盘：entry 的 href 会在成功后就地更新，先等它，否则预览会去取旧路径
+				await this.settleRename();
 				this.sheet = null;
 				this.viewer = { open: true, entry, kind: entry.kind, title: entry.name, href: entry.href, status: 'loading', text: '', html: '', error: '' };
 
@@ -1177,13 +1243,9 @@ const PAGE_HTML = `<!DOCTYPE html>
 			 */
 			async createFolder() {
 				const name = this.folder.name.trim();
-				if (!name) {
-					this.folder.error = '请填写目录名';
-					return;
-				}
-				// 这段 JS 处在 TS 模板字符串里，'\\\\' 输出的才是浏览器看到的 '\\'（单个反斜杠）
-				if (name.includes('/') || name.includes('\\\\')) {
-					this.folder.error = '目录名不能包含斜杠';
+				const invalid = this.check_name(name, '目录名');
+				if (invalid) {
+					this.folder.error = invalid;
 					return;
 				}
 
@@ -1204,6 +1266,138 @@ const PAGE_HTML = `<!DOCTYPE html>
 				} finally {
 					this.folder.busy = false;
 				}
+			},
+
+			/**
+			 * 点标题进入改名（只对文件；目录改名是递归重写每个子键，不在这轮范围内）。
+			 *
+			 * 进入时不改值，所以“点一下又关掉”不会误改 —— 值没变就不发请求。
+			 */
+			enterRename() {
+				if (!this.sheet || this.sheet.isDir) return;
+				this.rename = { active: true, original: this.sheet.name, draft: this.sheet.name, error: '', pending: null };
+				this.$nextTick(() => {
+					const input = document.getElementById('rename-input');
+					if (!input) return;
+					input.focus();
+					// 只选中主文件名，扩展名留着：改名绝大多数情况下不动后缀
+					const dot = this.rename.draft.lastIndexOf('.');
+					input.setSelectionRange(0, dot > 0 ? dot : this.rename.draft.length);
+				});
+			},
+
+			cancelRename() {
+				this.rename = { active: false, original: '', draft: '', error: '', pending: null };
+			},
+
+			/**
+			 * 提交改名（= 同目录 MOVE）。
+			 *
+			 * 触发点：Enter / @blur / 任何关闭或切换面板的路径。@blur 只当锦上添花 ——
+			 * 真正靠得住的是 closeAllPanels / selectEntry 这些必经之路上的显式调用。
+			 *
+			 * 返回一个 Promise（没有待提交的改名时返回 null），调用方可以 await 它再读 href。
+			 */
+			commitRename() {
+				if (!this.rename.active) return null;
+				const name = this.rename.draft.trim();
+				if (name === this.rename.original) {
+					this.cancelRename();
+					return null;
+				}
+				const invalid = this.check_name(name, '文件名');
+				if (invalid) {
+					// 非法名不关面板，留在编辑态让用户改
+					this.rename.error = invalid;
+					return null;
+				}
+				const entry = this.sheet;
+				if (!entry) {
+					this.cancelRename();
+					return null;
+				}
+				// 先退出编辑态，避免同一个改名被重复提交
+				this.rename.active = false;
+				this.rename.error = '';
+				this.rename.pending = this.renameEntry(entry, name);
+				return this.rename.pending;
+			},
+
+			/** 等挂起的改名落盘。任何要读 href 的动作都得先过这一关，否则拿到的是旧路径。 */
+			async settleRename() {
+				const pending = this.commitRename();
+				if (pending) await pending;
+			},
+
+			async renameEntry(entry, name) {
+				const old_href = entry.href;
+				const new_href = location.pathname + encodeURIComponent(name);
+				try {
+					const response = await fetch(old_href, {
+						method: 'MOVE',
+						credentials: 'include',
+						headers: {
+							// Destination 必须是绝对 URL，且 host 要和请求完全一致，否则服务端回 502
+							Destination: location.origin + new_href,
+							// 必须显式 F！MOVE 缺省是 T，会把同名目标先删掉 ——
+							// 目标恰好是目录时是**递归删光**它底下的所有对象。
+							Overwrite: 'F',
+						},
+					});
+					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+					this.applyRename(entry, old_href, name, new_href);
+					this.notify('已重命名为 ' + name);
+				} catch (err) {
+					this.notify('重命名失败：' + err.message);
+				} finally {
+					this.rename.pending = null;
+				}
+				await this.load();
+			},
+
+			/**
+			 * 改名成功后就地更新各处持有的引用。
+			 *
+			 * 漏掉任何一处都会留下隐性 bug：
+			 *  - sheet / viewer 还指着旧 href → 之后点预览或下载拿到 404
+			 *  - editor 还指着旧 href → 下一次保存会把**旧文件写回来**，一个文件变两个
+			 */
+			applyRename(entry, old_href, name, new_href) {
+				entry.name = name;
+				entry.href = new_href; // entry 就是 this.sheet，标题与动作随之更新
+				if (this.viewer.entry === entry) {
+					this.viewer.title = name;
+					this.viewer.href = new_href;
+				}
+				if (this.editor.href === old_href) {
+					this.editor.href = new_href;
+					this.editor.name = name;
+				}
+			},
+
+			/**
+			 * 下载。
+			 *
+			 * 改名还挂在半路时 sheet.href 已经过期，先等它落盘再放行，
+			 * 否则“改完名马上点下载”会拿到 404。没待办时也走这里，只多一次空等。
+			 */
+			async downloadEntry(entry, event) {
+				event.preventDefault();
+				await this.settleRename();
+				const link = document.createElement('a');
+				link.href = entry.href;
+				link.download = entry.name;
+				document.body.appendChild(link);
+				link.click();
+				link.remove();
+			},
+
+			/** 新名称校验（文件名 / 目录名共用，保证两处规则一致）。 */
+			check_name(name, label) {
+				if (!name) return '请填写' + label;
+				// 这段 JS 处在 TS 模板字符串里，'\\\\' 输出的才是浏览器看到的 '\\'（单个反斜杠）
+				if (name.includes('/') || name.includes('\\\\')) return label + '不能包含斜杠';
+				return '';
 			},
 
 			/** 打开编辑器：不传参为新建，传入 { href, name, text } 则编辑已有文件。 */
@@ -1227,6 +1421,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 			/** 编辑已有文本文件：先取回内容再进编辑器。 */
 			async editExisting(entry) {
+				await this.settleRename();
 				this.sheet = null;
 				try {
 					const response = await fetch(entry.href, { credentials: 'include' });
@@ -1252,13 +1447,9 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 			async saveEditor() {
 				const raw = this.editor.name.trim();
-				if (!raw) {
-					this.editor.error = '请填写文件名';
-					return;
-				}
-				// 这段 JS 处在 TS 模板字符串里，'\\\\' 输出的才是浏览器看到的 '\\'（单个反斜杠）
-				if (raw.includes('/') || raw.includes('\\\\')) {
-					this.editor.error = '文件名不能包含斜杠';
+				const invalid = this.check_name(raw, '文件名');
+				if (invalid) {
+					this.editor.error = invalid;
 					return;
 				}
 				// 没写扩展名时补 .txt，否则存完自己都预览不了
@@ -1298,6 +1489,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 			async copyLink(entry) {
 				if (!entry) return;
+				await this.settleRename();
 				const url = location.origin + entry.href;
 				this.sheet = null;
 				try {
