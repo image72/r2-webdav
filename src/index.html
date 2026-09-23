@@ -1237,7 +1237,14 @@
 						@click="downloadEntry(sheet, $event)"
 						:aria-label="sheet?.isDir ? 'Download as ZIP' : 'Download'"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg><span>下载</span>
+						<!-- 目录没有"原样下载"这回事，下载它就等于压缩成 zip（服务端不做 zip，全靠浏览器）。
+						     所以这里仍然只有一处操作，但**文字和图标必须跟着变** —— 否则用户看到的是
+						     「下载」，根本预期不到会拿到一个 zip 文件。文字与「解压」互为反义，图标用压缩包。 -->
+						<svg class="icon" aria-hidden="true">
+							<use x-show="!sheet?.isDir" href="#i-download"></use>
+							<use x-show="sheet?.isDir" href="#i-archive"></use>
+						</svg>
+						<span x-text="sheet?.isDir ? '压缩下载' : '下载'"></span>
 					</a>
 					<button
 						id="entry-extract-button"
