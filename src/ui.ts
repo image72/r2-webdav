@@ -217,23 +217,24 @@ const PAGE_HTML = `<!DOCTYPE html>
 	:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 	/* 内联 SVG 图标统一尺寸与配色（fill 继承 currentColor） */
 	.icon { display: block; width: 20px; height: 20px; flex: none; fill: currentColor; }
+	.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 	.app { display: flex; flex-direction: column; min-height: 100dvh; }
 
+	/* 顶栏：面包屑就是标题（52px 一行），不再单独占一行静态应用名 */
 	.app-bar {
 		position: sticky;
 		top: 0;
 		z-index: 20;
 		display: flex;
 		align-items: center;
-		gap: var(--sp-2);
-		padding: calc(var(--sp-3) + env(safe-area-inset-top)) var(--sp-4) var(--sp-3);
+		gap: var(--sp-1);
+		padding: calc(var(--sp-1) + env(safe-area-inset-top)) var(--sp-2) var(--sp-1) var(--sp-3);
 		background: rgba(255, 255, 255, 0.92);
 		-webkit-backdrop-filter: blur(8px);
 		backdrop-filter: blur(8px);
 		border-bottom: 1px solid var(--line);
 	}
-	.app-bar__title { flex: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 600; }
 	.icon-btn {
 		display: grid;
 		place-items: center;
@@ -252,12 +253,11 @@ const PAGE_HTML = `<!DOCTYPE html>
 		display: flex;
 		align-items: center;
 		gap: var(--sp-1);
+		flex: 1;
+		min-width: 0;
 		overflow-x: auto;
 		scrollbar-width: none;
-		padding: var(--sp-2) var(--sp-4);
-		background: var(--surface);
-		border-bottom: 1px solid var(--line);
-		font-size: 13px;
+		font-size: 15px;
 		white-space: nowrap;
 	}
 	.crumbs::-webkit-scrollbar { display: none; }
@@ -521,8 +521,8 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 	@media (min-width: 640px) {
 		.content { max-width: 760px; margin: 0 auto; width: 100%; }
-		/* 顶栏/面包屑保留整条背景与分隔线，只把内容对齐到 760px 主列 */
-		.app-bar, .crumbs { padding-left: max(var(--sp-4), calc((100% - 760px) / 2)); padding-right: max(var(--sp-4), calc((100% - 760px) / 2)); }
+		/* 顶栏保留整条背景与分隔线，只把内容对齐到 760px 主列 */
+		.app-bar { padding-left: max(var(--sp-3), calc((100% - 760px) / 2)); padding-right: max(var(--sp-2), calc((100% - 760px) / 2)); }
 		.sheet {
 			left: 50%;
 			right: auto;
@@ -572,20 +572,19 @@ const PAGE_HTML = `<!DOCTYPE html>
 	@drop.prevent="onDrop($event)">
 
 	<header class="app-bar">
-		<h1 class="app-bar__title">R2 Storage</h1>
+		<h1 class="sr-only">R2 Storage</h1>
+		<nav class="crumbs" aria-label="路径" x-ref="crumbs">
+			<template x-for="(crumb, index) in crumbs" :key="crumb.href">
+				<span class="crumbs__part">
+					<span class="crumb-sep" x-show="index > 0">/</span>
+					<a class="crumb" :class="{ 'crumb--current': index === crumbs.length - 1 }" :href="crumb.href" x-text="crumb.label"></a>
+				</span>
+			</template>
+		</nav>
 		<button class="icon-btn" @click="load()" :disabled="loading" title="刷新" aria-label="刷新">
 			<svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
 		</button>
 	</header>
-
-	<nav class="crumbs" aria-label="路径">
-		<template x-for="(crumb, index) in crumbs" :key="crumb.href">
-			<span class="crumbs__part">
-				<span class="crumb-sep" x-show="index > 0">/</span>
-				<a class="crumb" :class="{ 'crumb--current': index === crumbs.length - 1 }" :href="crumb.href" x-text="crumb.label"></a>
-			</span>
-		</template>
-	</nav>
 
 	<main class="content">
 		<div x-show="loading" aria-hidden="true">
@@ -737,6 +736,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 
 			init() {
 				this.load();
+				this.scrollCrumbs();
 				document.addEventListener('keydown', (event) => {
 					if (event.key !== 'Escape') return;
 					if (this.confirmTarget) this.confirmTarget = null;
@@ -772,6 +772,14 @@ const PAGE_HTML = `<!DOCTYPE html>
 					trail.push({ label: part, href: path + '/' });
 				}
 				return trail;
+			},
+
+			/** 路径较深时把面包屑滚到末尾，保证当前目录始终可见。 */
+			scrollCrumbs() {
+				this.$nextTick(() => {
+					const el = this.$refs.crumbs;
+					if (el) el.scrollLeft = el.scrollWidth;
+				});
 			},
 
 			iconFor(entry) {
