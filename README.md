@@ -19,7 +19,7 @@
   <img src="docs/screenshots/actions-mobile.png" width="220" alt="长按弹出的操作面板">
   <img src="docs/screenshots/editor-preview-mobile.png" width="220" alt="在编辑器里直接查看 Markdown 渲染效果">
 </p>
-<p align="center"><sub>目录列表 · 长按弹出操作面板 · 编辑器里直接「查看」渲染效果（表格、代码块、mermaid 都会画）</sub></p>
+<p align="center"><sub>目录列表 · 长按弹出操作面板 · 编辑器里直接「查看」渲染效果（表格、代码块、mermaid 都会渲染）</sub></p>
 
 ## 功能
 
@@ -37,7 +37,8 @@
 | 手势   | 长按（桌面端右键）弹出操作面板；操作带触感反馈                                                                            |
 | 长任务 | 打包 / 解压有进度、随时可取消；失败或取消会把半成品清掉，不留垃圾对象                                                     |
 
-### WebDAV 层
+<details>
+<summary><b>WebDAV 层</b>：协议实现细节（DAV class 1, 2，以及被真实客户端逼出来的那些坑）</summary>
 
 方法：`OPTIONS` `PROPFIND` `PROPPATCH` `MKCOL` `GET` `HEAD` `PUT` `DELETE` `COPY` `MOVE` `LOCK` `UNLOCK`（`DAV: 1, 2`）。
 
@@ -53,6 +54,8 @@
 - **macOS 影子对象**：`._xxx`（AppleDouble）、`.DS_Store`、`.Spotlight-V100` 等，上传时丢弃、列表里隐藏
 - **锁**：`LOCK`/`UNLOCK` 是真锁（状态落在单个 key `._locks` 上，不会被列表看到），但仍是 advisory —— `PUT`/`DELETE` 暂不强制校验锁令牌
 - **截断可见**：列表被截断时带上 `X-WebDAV-Truncated: true`
+
+</details>
 
 ## 快速开始（本地）
 
@@ -125,7 +128,8 @@ npm run deploy # = wrangler deploy
 - 打包 / 解压上限 80 MB，只改 `src/archive.client.js` 里的 `ZIP_BYTE_LIMIT` 一处即可。
 - 浏览器端依赖 CDN：Alpine.js、JSZip、markdown-it、mermaid 全部从 jsdelivr 拉取；内网或离线部署需要把这些依赖一并自托管。
 
-## 项目结构
+<details>
+<summary><b>项目结构</b>：每个文件负责什么</summary>
 
 ```
 src/index.ts             Worker 入口：Basic 鉴权、CORS、请求分发
@@ -138,6 +142,8 @@ src/r2.ts                R2 访问工具：路径编解码、列表、并发控�
 docs/webdav-fix-list.md  协议层的缺陷清单与修复记录
 docs/screenshots/        README 用的截图
 ```
+
+</details>
 
 ## 开发与检查
 
@@ -152,7 +158,8 @@ npx tsc --noEmit     # 类型检查
 - `src/archive.client.js` 不引用页面状态，只通过 `{ onProgress, signal }` 与外界通信 —— 这样将来换成 Worker 或整个删掉，页面都不用动。
 - `src/webdav.ts` 里每个偏离直觉的实现都写了"为什么"（RFC 条款 + 实测现象），改之前建议先读那段注释。
 
-## 已知限制
+<details>
+<summary><b>已知限制</b>：80 MB 打包上限、请求体 100/200 MB、advisory 锁、单目录 3000 项…</summary>
 
 - **打包 / 解压都在浏览器里完成**（JSZip，上限 80 MB），Worker 只负责搬字节 —— 超大目录请分次处理。
 - **单个目录最多列 3000 项**，超出会明确提示，未列出的部分需要用更具体的路径访问。
@@ -162,6 +169,8 @@ npx tsc --noEmit     # 类型检查
 - **锁是 advisory 的**：`LOCK`/`UNLOCK` 的状态和冲突判定是真的，但 `PUT`/`DELETE` 不强制要求锁令牌。
 - **只有一组 Basic 账号密码**，没有多用户、权限、配额。
 - 各客户端各自的脾气（Windows 资源管理器、Office、Finder 等）记录在 [docs/webdav-fix-list.md](docs/webdav-fix-list.md) 的「平台受限项」一节。
+
+</details>
 
 ## 测试
 
