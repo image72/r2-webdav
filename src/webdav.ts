@@ -232,6 +232,24 @@ async function handle_head(request: Request, bucket: R2Bucket): Promise<Response
 	});
 }
 
+/**
+ * 集合地址缺少尾斜杠时回 301，把客户端引到规范形式。
+ *
+ * RFC 4918 §5.1：集合用带尾斜杠的 URL 是规范形式；服务器可以把不带斜杠的请求当作带了，
+ * 并应该用 Content-Location 指出规范 URL；同时明确说“客户端需要准备好看到重定向”。
+ * 旧实现直接返回目录标记那个 0 字节对象，于是 GET /dir 得到 200 + 空体，客户端会以为
+ * 那是个空文件（下载为空、编辑器打开空白），而不是目录。
+ *
+ * 查询串必须原样保留：`?format=json` 这类请求在重定向后还得是同一个语义。
+ */
+function redirect_to_collection(request: Request): Response {
+	const url = new URL(request.url);
+	return new Response(null, {
+		status: 301,
+		headers: { Location: `${url.pathname}/${url.search}` },
+	});
+}
+
 async function handle_get(request: Request, bucket: R2Bucket): Promise<Response> {
 	let resource_path = make_resource_path(request);
 
@@ -246,7 +264,19 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 	const object = await bucket.get(resource_path, { range: request.headers });
 
 	if (object === null) {
+		// 没有标记对象的“隐式目录”（只有子对象、从未 MKCOL 过）也是个集合，同样要重定向
+		if (resource_path !== '') {
+			const probe = await bucket.list({ prefix: `${resource_path}/`, limit: 1 });
+			if (probe.objects.length > 0) {
+				return redirect_to_collection(request);
+			}
+		}
 		return new Response('Not Found', { status: 404 });
+	}
+
+	// 目录：这里是那个 0 字节标记对象，不是真的文件内容 —— 重定向而不是当作空文件发出去
+	if (is_collection(object)) {
+		return redirect_to_collection(request);
 	}
 
 	const conditional = evaluate_conditionals(request, object);
@@ -512,17 +542,32 @@ function propstat(inner: string, status: string): string {
  * `object` 为 null 表示没有标记对象的条目（桶根或隐式目录）；`collection` 为 true 时
  * href 必须带尾斜杠，否则客户端会把它当文件。
  * 被点名但不存在的属性按 RFC 4918 §9.1 用 404 propstat 回报。
+ *
+ * `locks` 是整张锁表；`lockdiscovery` 由它当场渲染（§15.8：没有锁时属性仍然存在，只是
+ * 含 0 个 <activelock>，所以不能简单省略这个属性）。
  */
 function generate_propfind_response(
 	key: string,
 	collection: boolean,
 	object: R2Object | null,
 	propfind: PropfindRequest,
+	locks: LockRecord[],
 ): string {
 	const href = key === '' ? '/' : `/${escape_xml(encode_path(key))}${collection ? '/' : ''}`;
 	const available = Object.entries(fromR2Object(object)).filter(([, value]) => value !== undefined) as Array<
 		[string, string]
 	>;
+
+	const active_locks = locks.filter((lock) => lock_covers(lock, key));
+	if (active_locks.length > 0) {
+		const rendered = active_locks.map((lock) => render_activelock(lock, lock_href(lock.path))).join('');
+		const index = available.findIndex(([name]) => name === 'lockdiscovery');
+		if (index === -1) {
+			available.push(['lockdiscovery', rendered]);
+		} else {
+			available[index] = ['lockdiscovery', rendered];
+		}
+	}
 
 	let propstats: string;
 	if (propfind.mode === 'propname') {
@@ -562,13 +607,15 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 	let resource_path = make_resource_path(request);
 
 	const propfind = await parse_propfind_body(request);
+	// 一次读锁表，给每条 <response> 复用；锁的个数是个位数，不随目录大小增长
+	const locks = await read_locks(bucket);
 	let target_is_collection: boolean;
 	let truncated = false;
 	let page = `<?xml version="1.0" encoding="utf-8"?>
 <multistatus xmlns="DAV:">`;
 
 	if (resource_path === '') {
-		page += generate_propfind_response('', true, null, propfind);
+		page += generate_propfind_response('', true, null, propfind, locks);
 		target_is_collection = true;
 	} else {
 		const resource = await resource_exists(bucket, resource_path);
@@ -576,7 +623,7 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 			return new Response('Not Found', { status: 404 });
 		}
 		target_is_collection = resource.is_collection;
-		page += generate_propfind_response(resource_path, resource.is_collection, resource.object, propfind);
+		page += generate_propfind_response(resource_path, resource.is_collection, resource.object, propfind, locks);
 	}
 
 	if (target_is_collection) {
@@ -589,7 +636,7 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 				const listing = await listDir(bucket, prefix);
 				for (const entry of listing.entries) {
 					if (is_os_metadata_key(entry.key)) continue; // 历史遗留的影子文件也不暴露给客户端
-					page += generate_propfind_response(entry.key, entry.is_collection, entry.object, propfind);
+					page += generate_propfind_response(entry.key, entry.is_collection, entry.object, propfind, locks);
 				}
 				truncated = listing.truncated;
 				break;
@@ -598,7 +645,7 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 				const listing = await listRecursive(bucket, prefix);
 				for (const object of listing.objects) {
 					if (is_os_metadata_key(object.key)) continue;
-					page += generate_propfind_response(object.key, is_collection(object), object, propfind);
+					page += generate_propfind_response(object.key, is_collection(object), object, propfind, locks);
 				}
 				truncated = listing.truncated;
 				break;
@@ -940,32 +987,302 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 	}
 }
 
-async function handle_lock(request: Request, bucket: R2Bucket): Promise<Response> {
-	// Simple lock response - no actual locking implementation
-	const lockToken = `opaquelocktoken:${crypto.randomUUID()}`;
-	const lockXML = `<?xml version="1.0" encoding="utf-8"?>
-<prop xmlns="DAV:">
-	<lockdiscovery>
-		<activelock>
-			<locktype><write/></locktype>
-			<lockscope><exclusive/></lockscope>
-			<depth>0</depth>
-			<timeout>Second-3600</timeout>
-			<locktoken><href>${lockToken}</href></locktoken>
-		</activelock>
-	</lockdiscovery>
-</prop>`;
+/**
+ * 锁状态存放位置。
+ *
+ * 为什么不放“真锁”：Workers 隔离环境没有跨请求共享内存，锁必须落到共享存储才算数。
+ * 而 R2 没有“只改元数据”的接口（见 B8），所以不能把锁写进被锁对象本身，只能旁路存。
+ *
+ * 放在单个 key `._locks` 上有两个好处：
+ *  1. `.` 开头的 key 本来就被 `is_os_metadata_key()` 过滤，不会出现在任何列表里；
+ *  2. 只有一个 key、不含 `/`，不会产生 `delimitedPrefixes`，看不到“幽灵目录”。
+ *
+ * 仍然是 **advisory** 的：LOCK/UNLOCK 之间的一致性（423 / 409 / 400 / 201、lockdiscovery）
+ * 现在是真的，但 PUT/DELETE 不会强制要求提交锁令牌 —— 一旦解析 `If` 头出错，Office/Finder
+ * 的保存流程会直接失败，那是必须单独验证的一步，见 docs/webdav-fix-list.md。
+ */
+const LOCK_STORE_KEY = '._locks';
+/** Timeout 上界。客户端可以请求 Infinite，但服务器有权选一个自己支持的值（§6.6）。 */
+const MAX_LOCK_SECONDS = 604800;
+const DEFAULT_LOCK_SECONDS = 3600;
 
-	return new Response(lockXML, {
-		status: 200,
+type LockScope = 'exclusive' | 'shared';
+
+type LockRecord = {
+	path: string;
+	token: string;
+	scope: LockScope;
+	depth: '0' | 'infinity';
+	owner: string;
+	expires: number;
+};
+
+/** 某个锁是否覆盖这个路径：锁根自身，或 depth=infinity 的祖先（间接锁）。 */
+function lock_covers(lock: LockRecord, path: string): boolean {
+	if (lock.path === path) return true;
+	if (lock.depth !== 'infinity') return false;
+	if (lock.path === '') return true; // 根上的无限深度锁覆盖一切
+	return path.startsWith(`${lock.path}/`);
+}
+
+function lock_remaining(lock: LockRecord): number {
+	return Math.max(0, lock.expires - Math.floor(Date.now() / 1000));
+}
+
+/**
+ * 读取锁表，顺带丢掉已过期、以及锁根已不存在的记录。
+ *
+ * RFC 4918 §6.1 第 8 点要求锁根变成未映射 URL 时锁必须跟着消失。用“读取时校验”实现，
+ * 就不用去改 DELETE / MOVE 那几条热路径；代价是每次读锁表多几个 head，而锁的数量
+ * 本来就是个位数。
+ */
+async function read_locks(bucket: R2Bucket): Promise<LockRecord[]> {
+	const object = await bucket.get(LOCK_STORE_KEY);
+	if (object === null) {
+		return [];
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(await object.text());
+	} catch {
+		return [];
+	}
+	if (!Array.isArray(parsed)) {
+		return [];
+	}
+	const now = Math.floor(Date.now() / 1000);
+	const alive: LockRecord[] = [];
+	for (const item of parsed as Partial<LockRecord>[]) {
+		if (typeof item.token !== 'string' || typeof item.path !== 'string' || typeof item.expires !== 'number') {
+			continue;
+		}
+		if (item.expires <= now) continue;
+		// 空路径是桶根，永远存在（resource_exists 对空路径返回 null 是表示“没有标记对象”）
+		if (item.path !== '' && (await resource_exists(bucket, item.path)) === null) continue;
+		alive.push({
+			path: item.path,
+			token: item.token,
+			scope: item.scope === 'shared' ? 'shared' : 'exclusive',
+			depth: item.depth === '0' ? '0' : 'infinity',
+			owner: typeof item.owner === 'string' ? item.owner : '',
+			expires: item.expires,
+		});
+	}
+	return alive;
+}
+
+async function write_locks(bucket: R2Bucket, locks: LockRecord[]): Promise<void> {
+	await bucket.put(LOCK_STORE_KEY, JSON.stringify(locks));
+}
+
+/** 解析 Timeout 请求头（§10.7）。服务器有权挑一个自己支持的值，所以永远钳到上界。 */
+function parse_timeout(header: string | null): number {
+	if (header === null) {
+		return DEFAULT_LOCK_SECONDS;
+	}
+	for (const candidate of header.split(',')) {
+		const value = candidate.trim();
+		if (value === 'Infinite') {
+			return MAX_LOCK_SECONDS;
+		}
+		const match = /^Second-(\d+)$/.exec(value);
+		if (match !== null) {
+			return Math.min(Math.max(Number(match[1]), 1), MAX_LOCK_SECONDS);
+		}
+	}
+	return DEFAULT_LOCK_SECONDS;
+}
+
+/**
+ * 取出 If 头里被提交的状态令牌（§10.4）。
+ * Resource-Tag（</path> 或 <http://…>）不是令牌，靠 URI scheme 前缀区分。
+ */
+function submitted_tokens(header: string | null): string[] {
+	if (header === null) {
+		return [];
+	}
+	const tokens: string[] = [];
+	for (const match of header.matchAll(/<([^>]*)>/g)) {
+		if (/^[a-z][a-z0-9+.-]*:/i.test(match[1])) {
+			tokens.push(match[1]);
+		}
+	}
+	return tokens;
+}
+
+/** 解析 lockinfo 请求体。拿不到合法的 lockscope 就是格式错误（§8.2 → 400）。 */
+function parse_lockinfo(body: string): { scope: LockScope; owner: string } | null {
+	const scope_match = /<(?:[\w.-]+:)?lockscope\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?lockscope>/i.exec(body);
+	if (scope_match === null) {
+		return null;
+	}
+	const scope: LockScope | null = /<(?:[\w.-]+:)?shared\b/i.test(scope_match[1])
+		? 'shared'
+		: /<(?:[\w.-]+:)?exclusive\b/i.test(scope_match[1])
+			? 'exclusive'
+			: null;
+	if (scope === null) {
+		return null;
+	}
+	const owner_match = /<(?:[\w.-]+:)?owner\b[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?owner>/i.exec(body);
+	return { scope: scope, owner: owner_match === null ? '' : owner_match[1].trim() };
+}
+
+/**
+ * 渲染一条 <activelock>。
+ *
+ * `<lockroot>` 在 §14.1 的 DTD 里是**必需**元素（客户端靠它判断锁覆盖到哪），
+ * 而 §14.12 明确要求“SHOULD include this in all DAV:lockdiscovery values and the
+ * response to LOCK requests” —— 旧实现从来没给过。
+ */
+function render_activelock(lock: LockRecord, root_href: string): string {
+	const owner = lock.owner === '' ? '' : `<owner>${lock.owner}</owner>`;
+	return `<activelock><locktype><write/></locktype><lockscope><${lock.scope}/></lockscope><depth>${lock.depth}</depth>${owner}<timeout>Second-${lock_remaining(lock)}</timeout><locktoken><href>${escape_xml(lock.token)}</href></locktoken><lockroot><href>${escape_xml(root_href)}</href></lockroot></activelock>`;
+}
+
+/** LOCK 的响应体：DAV:lockdiscovery 包在 prop 里（§9.10.1）。 */
+function lock_body(lock: LockRecord, root_href: string): string {
+	return `<?xml version="1.0" encoding="utf-8"?>
+<prop xmlns="DAV:">
+	<lockdiscovery>${render_activelock(lock, root_href)}</lockdiscovery>
+</prop>`;
+}
+
+/** 锁相关路径的 href 形式（编码后带前导斜杠）。 */
+function lock_href(path: string): string {
+	return path === '' ? '/' : `/${encode_path(path)}`;
+}
+
+/**
+ * RFC 4918 §16 的前置条件错误体。各 condition 允许的子元素不同：
+ * `no-conflicting-lock` 与 `lock-token-submitted` 带 href，`lock-token-matches-request-uri` 必须为空。
+ */
+function precondition_error(status: number, condition: string, hrefs: string[]): Response {
+	const inner = hrefs.map((href) => `<href>${escape_xml(href)}</href>`).join('');
+	const body = `<?xml version="1.0" encoding="utf-8"?>
+<error xmlns="DAV:">
+	<${condition}>${inner}</${condition}>
+</error>`;
+	return new Response(body, { status: status, headers: { 'Content-Type': 'application/xml' } });
+}
+
+/**
+ * RFC 4918 §9.10。
+ *
+ * 旧实现是个彻底的假桩：任何请求都发一个新 token 并回 200（LOCK 不存在的资源也回 200）、
+ * 已持有的锁再锁一次照旧回 200、`<lockroot>` 从来没有、Timeout 头不回、刷新锁也不认。
+ */
+async function handle_lock(request: Request, bucket: R2Bucket): Promise<Response> {
+	const resource_path = make_resource_path(request);
+	const depth_header = request.headers.get('Depth');
+	// §9.10.3：LOCK 的 Depth 只能是 0 或 infinity；没给就等于 infinity
+	if (depth_header !== null && depth_header !== '0' && depth_header !== 'infinity') {
+		return new Response('Depth must be 0 or infinity on LOCK', { status: 400 });
+	}
+	const depth: '0' | 'infinity' = depth_header === '0' ? '0' : 'infinity';
+	const root_href = new URL(request.url).pathname;
+	const seconds = parse_timeout(request.headers.get('Timeout'));
+	const body = await request.text();
+	const locks = await read_locks(bucket);
+
+	// 无请求体 = 刷新已有锁（§9.10.2）：必须用 If 头指明刷新哪一把
+	if (body.trim() === '') {
+		const tokens = submitted_tokens(request.headers.get('If'));
+		if (tokens.length === 0) {
+			// §9.10.1 要求“新建锁必须有 XML 请求体”，§7.7 要求“无体的 LOCK 不得创建新锁”。
+			// 既没有体、又没有令牌，无法判断客户端意图 → 400
+			return new Response('LOCK without a body must name the lock to refresh in an If header', { status: 400 });
+		}
+		const target = locks.find((lock) => tokens.includes(lock.token) && lock_covers(lock, resource_path));
+		if (target === undefined) {
+			// §9.10.6：令牌不在 Request-URI 的作用域内（锁已消失，或本就不覆盖这里）
+			return precondition_error(412, 'lock-token-matches-request-uri', []);
+		}
+		target.expires = Math.floor(Date.now() / 1000) + seconds;
+		await write_locks(bucket, locks);
+		// §9.10.2：刷新成功**不**回 Lock-Token 头，但响应体要给出更新后的 lockdiscovery
+		return new Response(lock_body(target, root_href), {
+			status: 200,
+			headers: { 'Content-Type': 'application/xml', Timeout: `Second-${seconds}` },
+		});
+	}
+
+	const info = parse_lockinfo(body);
+	if (info === null) {
+		return new Response('Malformed lockinfo body', { status: 400 });
+	}
+
+	// §9.10.5 兼容表：已持有独占锁 → 任何新锁都不兼容；已持有共享锁 + 新锁要独占 → 不兼容。
+	// 请求 depth=infinity 时还要看后代已有的锁，否则整棵子树上的锁会被悄悄绕过。
+	const subtree = depth === 'infinity' && resource_path !== '' ? `${resource_path}/` : null;
+	const conflicting = locks.find((lock) => {
+		const overlaps = lock_covers(lock, resource_path) || (subtree !== null && lock.path.startsWith(subtree));
+		return overlaps && (lock.scope === 'exclusive' || info.scope === 'exclusive');
+	});
+	if (conflicting !== undefined) {
+		// §9.10.6：已存在不兼容的锁 → 423 + no-conflicting-lock（带上冲突锁的根，省掉客户端一次查询）
+		return precondition_error(423, 'no-conflicting-lock', [lock_href(conflicting.path)]);
+	}
+
+	// 桶根始终存在（resource_exists 对空路径返回 null 是为了表达“没有标记对象”）
+	const resource =
+		resource_path === '' ? { object: null, is_collection: true } : await resource_exists(bucket, resource_path);
+
+	// §9.10.4 / §7.3：对未映射 URL 加锁成功必须**创建**一个空的（非集合）资源，并回 201。
+	let created = false;
+	if (resource === null) {
+		const parent = parent_path(resource_path);
+		if (parent !== '') {
+			const parent_resource = await resource_exists(bucket, parent);
+			// §9.10.6：中间集合不存在 → 409，服务器不得自动补建
+			if (parent_resource === null || !parent_resource.is_collection) {
+				return new Response('Conflict', { status: 409 });
+			}
+		}
+		await bucket.put(resource_path, new Uint8Array());
+		created = true;
+	}
+
+	const lock: LockRecord = {
+		path: resource_path,
+		token: `opaquelocktoken:${crypto.randomUUID()}`,
+		scope: info.scope,
+		depth: depth,
+		owner: info.owner,
+		expires: Math.floor(Date.now() / 1000) + seconds,
+	};
+	await write_locks(bucket, [...locks, lock]);
+
+	return new Response(lock_body(lock, root_href), {
+		status: created ? 201 : 200,
 		headers: {
 			'Content-Type': 'application/xml',
-			'Lock-Token': `<${lockToken}>`,
+			'Lock-Token': `<${lock.token}>`,
+			// §18.2：class 2 必须提供 Time-Out 响应头（我们 OPTIONS 里声明了 dav: 1, 2）
+			Timeout: `Second-${seconds}`,
 		},
 	});
 }
 
+/** RFC 4918 §9.11。旧实现无条件回 204，连令牌都从不校验。 */
 async function handle_unlock(request: Request, bucket: R2Bucket): Promise<Response> {
+	const resource_path = make_resource_path(request);
+	const header = request.headers.get('Lock-Token');
+	if (header === null || header.trim() === '') {
+		// §9.11.1：没有提供锁令牌 → 400（不是 204）
+		return new Response('UNLOCK requires a Lock-Token header', { status: 400 });
+	}
+	const token = header.trim().replace(/^</, '').replace(/>$/, '');
+	const locks = await read_locks(bucket);
+	const target = locks.find((lock) => lock.token === token);
+	if (target === undefined || !lock_covers(target, resource_path)) {
+		// §9.11.1 + §16：资源没被锁、或 Request-URI 不在该锁的作用域内 → 409
+		return precondition_error(409, 'lock-token-matches-request-uri', []);
+	}
+	await write_locks(
+		bucket,
+		locks.filter((lock) => lock.token !== token),
+	);
 	return new Response(null, { status: 204 });
 }
 
