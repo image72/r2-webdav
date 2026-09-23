@@ -4,6 +4,18 @@ name = "r2-webdav"
 
 compatibility_flags = ["nodejs_compat"]
 
+# 页面从 ui.ts 里拆出来单独放 src/index.html，作为「文本模块」引入：
+#   import PAGE_HTML from './index.html'   （见 src/ui.ts）
+# type 只能是 ESModule / CommonJS / CompiledWasm / Text / Data。
+# wrangler 自带的默认规则里本来就有 {"type":"Text","globs":["**/*.txt","**/*.html"]}，
+# 这里仍然显式写一遍：不依赖隐式默认（将来默认变了会报一个很难懂的错），
+# 并加 fallthrough = true 让默认规则继续生效，否则 wrangler 会告警说默认规则被遮住。
+# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#bundling
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
 # Bind an R2 Bucket. Use R2 to store arbitrarily large blobs of data, such as files.
 # Docs: https://developers.cloudflare.com/r2/api/workers/workers-api-usage/
 [[r2_buckets]]
