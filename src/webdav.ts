@@ -11,7 +11,7 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 
-import { PERFORMANCE_CONFIG, listAll, processWithConcurrencyLimit } from './r2';
+import { PERFORMANCE_CONFIG, is_os_metadata_key, listAll, processWithConcurrencyLimit } from './r2';
 import { handle_browse_request } from './ui';
 
 type DavProperties = {
@@ -162,6 +162,12 @@ async function handle_put(request: Request, bucket: R2Bucket): Promise<Response>
 	}
 
 	let resource_path = make_resource_path(request);
+
+	// macOS 上传文件时会附带 PUT 一个 ._xxx 影子文件（扩展属性 / resource fork），
+	// 直接丢弃并回 201：回错误会让 Finder 报错重试，存下来则是一堆无意义对象
+	if (is_os_metadata_key(resource_path)) {
+		return new Response('', { status: 201 });
+	}
 
 	// Auto-create parent directories if they don't exist (for Finder compatibility)
 	let dirpath = resource_path.split('/').slice(0, -1).join('/');
@@ -332,6 +338,7 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 				{
 					let prefix = resource_path === '' ? resource_path : resource_path + '/';
 					for await (let object of listAll(bucket, prefix)) {
+						if (is_os_metadata_key(object.key)) continue; // 历史遗留的影子文件也不暴露给客户端
 						page += generate_propfind_response(object);
 					}
 				}
@@ -345,6 +352,7 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 						if (objectCount >= PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST) {
 							break; // Prevent excessive processing
 						}
+						if (is_os_metadata_key(object.key)) continue;
 						page += generate_propfind_response(object);
 						objectCount++;
 					}
@@ -517,6 +525,7 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 			case 'infinity': {
 				let prefix = resource_path + '/';
 				const copy = async (object: R2Object) => {
+					if (is_os_metadata_key(object.key)) return; // 影子文件不复制
 					let target = destination + '/' + object.key.slice(prefix.length);
 					target = target.endsWith('/') ? target.slice(0, -1) : target;
 					let src = await bucket.get(object.key);
@@ -627,6 +636,11 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 			case 'infinity': {
 				let prefix = resource_path + '/';
 				const move = async (object: R2Object) => {
+					// 影子文件不搬走，但要从源端删掉，免得留下永远看不见的孤儿对象
+					if (is_os_metadata_key(object.key)) {
+						await bucket.delete(object.key);
+						return;
+					}
 					let target = destination + '/' + object.key.slice(prefix.length);
 					target = target.endsWith('/') ? target.slice(0, -1) : target;
 					let src = await bucket.get(object.key);

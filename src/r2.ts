@@ -50,3 +50,29 @@ export async function processWithConcurrencyLimit<T>(
 		await Promise.all(batchPromises);
 	}
 }
+
+/**
+ * macOS 通过 WebDAV 挂载点写文件时，会顺带产生一批“影子”对象：
+ *   - `._xxx`：AppleDouble，存 resource fork / 扩展属性，每个上传的文件都会配一个
+ *   - `.DS_Store` / `.Spotlight-V100` 等：Finder 与 Spotlight 的目录元数据
+ * 这些对用户没有意义，只会在存储里悄悄堆积，因此上传层丢弃、列表层隐藏。
+ */
+const MACOS_METADATA_NAMES = new Set([
+	'.DS_Store',
+	'.AppleDouble',
+	'.Spotlight-V100',
+	'.Trashes',
+	'.fseventsd',
+	'.TemporaryItems',
+	'.DocumentRevisions-V100',
+	'.VolumeIcon.icns',
+	'.apdisk',
+	'Network Trash Folder',
+	'Temporary Items',
+]);
+
+/** 是否为操作系统生成的元数据文件；只看最后一段名字，所以任意层级都生效。 */
+export function is_os_metadata_key(key: string): boolean {
+	const name = key.slice(key.lastIndexOf('/') + 1);
+	return name.startsWith('._') || MACOS_METADATA_NAMES.has(name);
+}

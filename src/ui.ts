@@ -5,7 +5,7 @@
  * 协议实现（PROPFIND/PUT/COPY…）全部留在 webdav.ts，两边互不引用。
  */
 
-import { listAll } from './r2';
+import { is_os_metadata_key, listAll } from './r2';
 
 export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
 
@@ -128,6 +128,10 @@ async function list_entries(bucket: R2Bucket, dir: string): Promise<BrowseEntry[
 
 	for await (const object of listAll(bucket, prefix)) {
 		if (object.key === dir) {
+			continue;
+		}
+		// macOS 的影子文件不在界面上展示（上传层已经拦了，这里挡历史遗留的）
+		if (is_os_metadata_key(object.key)) {
 			continue;
 		}
 		const isDir = object.customMetadata?.resourcetype === '<collection />';
