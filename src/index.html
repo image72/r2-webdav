@@ -878,7 +878,7 @@
 			iconFor(entry) {
 				if (entry.isDir) return 'folder';
 				if (entry.kind) return entry.kind;
-				return /.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name) ? 'archive' : 'file';
+				return /\.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name) ? 'archive' : 'file';
 			},
 
 			metaFor(entry) {
@@ -1207,7 +1207,6 @@
 			/** 新名称校验（文件名 / 目录名共用，保证两处规则一致）。 */
 			check_name(name, label) {
 				if (!name) return '请填写' + label;
-				// 这段 JS 处在 TS 模板字符串里，'\\' 输出的才是浏览器看到的 '\'（单个反斜杠）
 				if (name.includes('/') || name.includes('\\')) return label + '不能包含斜杠';
 				return '';
 			},
