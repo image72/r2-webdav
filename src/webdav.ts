@@ -1229,8 +1229,13 @@ async function handle_lock(request: Request, bucket: R2Bucket): Promise<Response
 		resource_path === '' ? { object: null, is_collection: true } : await resource_exists(bucket, resource_path);
 
 	// §9.10.4 / §7.3：对未映射 URL 加锁成功必须**创建**一个空的（非集合）资源，并回 201。
+	//
+	// 例外是影子文件：`._foo.txt` / `.DS_Store` 这类是 handle_put 按设计**直接丢弃**的，
+	// 永远不会被存下来。如果这里为了加锁就把它们创建出来，桶里会积起一层永远看不见的
+	// 0 字节垃圾 —— 而 macOS 每写一个文件都会 LOCK 一次它的 AppleDouble 伙伴
+	// （生产日志里 `LOCK /._content1.txt` 就是它），这条路径非常热。
 	let created = false;
-	if (resource === null) {
+	if (resource === null && !is_os_metadata_key(resource_path)) {
 		const parent = parent_path(resource_path);
 		if (parent !== '') {
 			const parent_resource = await resource_exists(bucket, parent);
