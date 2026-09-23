@@ -1493,7 +1493,10 @@
 						未保存
 					</span>
 					<!-- 「查看」放在保存旁边，但**不关掉编辑器**：改一改 → 看一眼 → 再改，
-					     每次想看效果都得先保存一次（真的写服务器）太别扭了。 -->
+					     每次想看效果都得先保存一次（真的写服务器）太别扭了。
+					     图标必须跟着**按钮的动作**走：查看态下它的作用是"回到编辑"，
+					     所以换成铅笔。只靠底色和 title 变化是不够的 —— title 在触屏上根本
+					     看不到，而底色太淡，两种模式看上去就是同一排按钮。 -->
 					<button
 						id="editor-preview-button"
 						class="icon-btn"
@@ -1503,7 +1506,10 @@
 						:title="editor.preview ? '继续编辑' : '查看效果'"
 						:aria-label="editor.preview ? 'Back to editing' : 'Preview'"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg>
+						<svg class="icon" aria-hidden="true">
+							<use x-show="!editor.preview" href="#i-eye"></use>
+							<use x-show="editor.preview" href="#i-edit"></use>
+						</svg>
 					</button>
 					<button
 						id="editor-save-button"
