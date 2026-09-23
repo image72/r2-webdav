@@ -38,7 +38,7 @@
 | 长任务 | 打包 / 解压有进度、随时可取消；失败或取消会把半成品清掉，不留垃圾对象                                                     |
 
 <details>
-<summary><b>WebDAV 层</b>：协议实现细节</summary>
+<summary><h3>WebDAV 层：协议实现细节</h3></summary>
 
 方法：`OPTIONS` `PROPFIND` `PROPPATCH` `MKCOL` `GET` `HEAD` `PUT` `DELETE` `COPY` `MOVE` `LOCK` `UNLOCK`（`DAV: 1, 2`）。
 
@@ -129,7 +129,7 @@ npm run deploy # = wrangler deploy
 - 浏览器端依赖 CDN：Alpine.js、JSZip、markdown-it、mermaid 全部从 jsdelivr 拉取；内网或离线部署需要把这些依赖一并自托管。
 
 <details>
-<summary><b>项目结构</b>：每个文件负责什么</summary>
+<summary><h2>项目结构：每个文件负责什么</h2></summary>
 
 ```
 src/index.ts             Worker 入口：Basic 鉴权、CORS、请求分发
@@ -159,7 +159,7 @@ npx tsc --noEmit     # 类型检查
 - `src/webdav.ts` 里每个偏离直觉的实现都写了"为什么"（RFC 条款 + 实测现象），改之前建议先读那段注释。
 
 <details>
-<summary><b>已知限制</b>：平台上限与实现取舍</summary>
+<summary><h2>已知限制：平台上限与实现取舍</h2></summary>
 
 - **打包 / 解压都在浏览器里完成**（JSZip，上限 80 MB），Worker 只负责搬字节 —— 超大目录请分次处理。
 - **单个目录最多列 3000 项**，超出会明确提示，未列出的部分需要用更具体的路径访问。
