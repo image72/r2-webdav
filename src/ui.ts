@@ -440,12 +440,16 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.sheet__item--muted { color: var(--ink-60); justify-content: center; }
 	.sheet__item .icon { color: var(--ink-60); }
 	.sheet__item--danger .icon { color: var(--danger); }
-	.sheet__item + .sheet__item { margin-top: var(--sp-1); }
-	/* 取消（退出类）与上面的删除拉开距离，避免想点取消却点到删除 */
+	/* 相邻可点目标至少留 8px，避免指腹滓到下一项 */
+	.sheet__item + .sheet__item { margin-top: var(--sp-2); }
+	/* 取消（退出类）与上面的操作拉开距离，避免想点取消却点到别的 */
 	.sheet__item.sheet__item--muted { margin-top: var(--sp-3); }
 	.sheet__actions { display: flex; gap: var(--sp-2); padding: var(--sp-3) 0 0; }
 	.sheet__actions .btn { flex: 1; }
 	.sheet__note { margin: 0; padding: 0 var(--sp-3) var(--sp-3); color: var(--danger); font-size: 14px; }
+	/* 新建目录面板：标题自带 --sp-3 内缩，输入框与错误行跟着对齐 */
+	.sheet--new-folder .editor__field { padding: 0 var(--sp-3); }
+	.sheet--new-folder .editor__error { padding: var(--sp-2) var(--sp-3) 0; }
 	.sheet__list {
 		margin: 0;
 		padding: 0 var(--sp-3) var(--sp-4);
@@ -655,7 +659,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 <div class="app"
 	x-data="browser()"
 	x-init="init()"
-	x-effect="document.body.classList.toggle('locked', !!(viewer.open || sheet || confirmTarget || newMenu || editor.open || uploadConflicts))"
+	x-effect="document.body.classList.toggle('locked', !!(viewer.open || sheet || confirmTarget || newMenu || folder.open || editor.open || uploadConflicts))"
 	@dragover.prevent="dragging = true"
 	@dragleave="dragging = false"
 	@drop.prevent="onDrop($event)">
@@ -732,20 +736,50 @@ const PAGE_HTML = `<!DOCTYPE html>
 		aria-hidden="true" tabindex="-1" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
 
 	<div id="backdrop" class="backdrop" aria-hidden="true"
-		:class="{ open: !!(sheet || confirmTarget || newMenu || editor.open || uploadConflicts) }"
-		@click="sheet = null; confirmTarget = null; newMenu = false; uploadConflicts = null"></div>
+		:class="{ open: !!(sheet || confirmTarget || newMenu || folder.open || editor.open || uploadConflicts) }"
+		@click="sheet = null; confirmTarget = null; newMenu = false; folder.open = false; uploadConflicts = null"></div>
 
 	<template x-if="newMenu">
 		<div id="new-menu-panel" class="sheet sheet--new open" role="dialog" aria-modal="true" aria-label="New">
 			<span class="sheet__title">新建</span>
+			<!--
+				排序依据（自上而下 = 从外到内、从容器到内容）：
+				1. 上传文件 —— 最常用的动作，也是空目录页的主动作（「上传第一个文件」），
+				   离触发点（右下角 FAB）最近，点得最少；
+				2. 新建目录 —— 在服务端就地建容器；
+				3. 新建文本文件 —— 在服务端就地建内容。
+				2 在 3 之前，与列表自身的排序（目录在文件之前）保持一致。
+				取消固定最后，并且单独多留一段间距。
+			-->
 			<button id="new-upload-button" class="sheet__item" @click="newMenu = false; pickerRef().click()"
 				aria-label="Upload files">
 				<svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg><span>上传文件</span>
+			</button>
+			<button id="new-folder-button" class="sheet__item" @click="openFolder()" aria-label="New folder">
+				<svg class="icon" aria-hidden="true"><use href="#i-folder"></use></svg><span>新建目录</span>
 			</button>
 			<button id="new-text-button" class="sheet__item" @click="openEditor()" aria-label="New text file">
 				<svg class="icon" aria-hidden="true"><use href="#i-note-add"></use></svg><span>新建文本文件</span>
 			</button>
 			<button id="new-cancel-button" class="sheet__item sheet__item--muted" @click="newMenu = false" aria-label="Cancel">取消</button>
+		</div>
+	</template>
+
+	<template x-if="folder.open">
+		<div id="new-folder-panel" class="sheet sheet--new-folder open" role="dialog" aria-modal="true" aria-label="New folder">
+			<span class="sheet__title">新建目录</span>
+			<label class="editor__field">
+				<span class="editor__label">目录名</span>
+				<input id="folder-name-input" class="editor__input" type="text" x-model="folder.name"
+					@keydown.enter.prevent="createFolder()" aria-label="Folder name" placeholder="新建文件夹"
+					autocomplete="off" autocapitalize="off" spellcheck="false">
+			</label>
+			<p class="editor__error" x-show="folder.error" x-text="folder.error"></p>
+			<div class="sheet__actions">
+				<button id="folder-cancel-button" class="btn btn--muted" @click="folder.open = false" :disabled="folder.busy" aria-label="Cancel">取消</button>
+				<button id="folder-create-button" class="btn" @click="createFolder()" :disabled="folder.busy"
+					x-text="folder.busy ? '创建中…' : '创建'" aria-label="Create folder"></button>
+			</div>
 		</div>
 	</template>
 
@@ -908,6 +942,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 			confirmTarget: null,
 			uploadConflicts: null,
 			newMenu: false,
+			folder: { open: false, name: '', busy: false, error: '' },
 			viewer: { open: false, entry: null, kind: '', title: '', href: '', status: 'loading', text: '', html: '', error: '' },
 			editor: { open: false, href: '', name: '', text: '', contentType: null, dirty: false, conflict: false, busy: false, error: '', confirmDiscard: false },
 
@@ -919,6 +954,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 					if (this.confirmTarget) this.confirmTarget = null;
 					else if (this.uploadConflicts) this.uploadConflicts = null;
 					else if (this.sheet) this.sheet = null;
+					else if (this.folder.open) this.folder.open = false;
 					else if (this.newMenu) this.newMenu = false;
 					else if (this.editor.open) this.requestCloseEditor();
 					else if (this.viewer.open) this.closeViewer();
@@ -1103,6 +1139,67 @@ const PAGE_HTML = `<!DOCTYPE html>
 					if (!taken.has(candidate)) return candidate;
 				}
 				return 'untitled.txt';
+			},
+
+			/** 打开新建目录面板：默认名同样从已有条目里挑一个不冲突的。 */
+			openFolder() {
+				this.newMenu = false;
+				this.sheet = null;
+				this.folder = { open: true, name: this.default_folder_name(), busy: false, error: '' };
+			},
+
+			/**
+			 * 新建目录时的默认名。
+			 *
+			 * 和 default_new_name() 同理：不能用固定名，否则第二次新建就必定撞名，
+			 * 而 MKCOL 撞名只会得到一个 405，用户看到的是一句没头没脑的报错。
+			 */
+			default_folder_name() {
+				const taken = new Set(this.entries.map((entry) => entry.name));
+				if (!taken.has('新建文件夹')) return '新建文件夹';
+				for (let index = 2; index < 1000; index++) {
+					const candidate = '新建文件夹-' + index;
+					if (!taken.has(candidate)) return candidate;
+				}
+				return '新建文件夹';
+			},
+
+			/**
+			 * MKCOL 建目录。
+			 *
+			 * 目录在 R2 里是一个带 resourcetype 标记的空对象，所以这里必须先建目录再传文件；
+			 * 不做“已存在就静默成功”—— 405/409 都是真实错误，要如实报给用户（
+			 * 409 通常意味着父级已经不是集合了）。
+			 */
+			async createFolder() {
+				const name = this.folder.name.trim();
+				if (!name) {
+					this.folder.error = '请填写目录名';
+					return;
+				}
+				// 这段 JS 处在 TS 模板字符串里，'\\\\' 输出的才是浏览器看到的 '\\'（单个反斜杠）
+				if (name.includes('/') || name.includes('\\\\')) {
+					this.folder.error = '目录名不能包含斜杠';
+					return;
+				}
+
+				this.folder.busy = true;
+				this.folder.error = '';
+				try {
+					// 尾部斜杠是集合的规范写法；服务端 make_resource_path 会去掉它再取 key
+					const response = await fetch(location.pathname + encodeURIComponent(name) + '/', {
+						method: 'MKCOL',
+						credentials: 'include',
+					});
+					if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+					this.folder.open = false;
+					this.notify('已创建目录 ' + name);
+					await this.load();
+				} catch (err) {
+					this.folder.error = '创建失败：' + err.message;
+				} finally {
+					this.folder.busy = false;
+				}
 			},
 
 			/** 打开编辑器：不传参为新建，传入 { href, name, text } 则编辑已有文件。 */
