@@ -820,13 +820,27 @@
 				pointer-events: none;
 			}
 
+			/*
+			 * 居中**不用 transform**。
+			 *
+			 * 原来写的是 left: 50% + transform: translateX(-50%)，但 x-transition.opacity 在进场
+			 * 动画期间会往同一个元素上写内联 transform: scale(1)（还带 transform-origin），
+			 * 内联样式压过样式表 —— 于是动画那 150ms 里 translateX(-50%) 整个失效，提示条左边缘
+			 * 就贴在视口中心线上，等过渡结束 Alpine 清掉内联样式，它再硬跳回正中。
+			 * 实测一条 355px 宽的提示会横跳 177px，每次出现都跳一次。
+			 *
+			 * 换成左/右都贴 0 再让 auto 外边距分掉剩余空间：定宽盒子（见下面的 --progress）
+			 * 和不定宽的盒子都能居中，而且跟 transform 完全无关，谁写内联都影响不到。
+			 */
 			.toast {
 				position: fixed;
-				left: 50%;
+				left: 0;
+				right: 0;
+				margin: 0 auto;
+				width: fit-content;
 				bottom: calc(88px + env(safe-area-inset-bottom));
 				z-index: 80;
 				max-width: 90vw;
-				transform: translateX(-50%);
 				/* 提示文字 + （归档进行中才有的）取消按钮 */
 				display: flex;
 				align-items: center;
@@ -837,6 +851,31 @@
 				color: #fff;
 				font-size: 14px;
 				box-shadow: 0 8px 24px rgba(15, 23, 42, 0.24);
+			}
+
+			/*
+			 * 进度态：打包 / 解压 / 批量上传这种**会连续换文字**的提示条。
+			 *
+			 * 提示条是居中的（left: 50% + translateX(-50%)），宽度又由内容决定 —— 文字一换长度，
+			 * 盒子就跟着伸缩，两个边一起往外跑。实测同一屏宽下，从「链接已复制」到一条带长文件名的
+			 * 上传进度，左边缘能横移 126px：看着就是提示条在左右乱晃。
+			 *
+			 * 进度态里把宽度钉死，只换文字。420px 与桌面端面板（min(420px, 92vw)）同宽，
+			 * 90vw 这个上限与上面的 max-width 保持一致。
+			 */
+			.toast--progress {
+				width: min(420px, 90vw);
+			}
+			/*
+			 * 定宽之后文字得自己收着：长文件名会换行，盒子又开始上下跳，还会把「取消」挤走。
+			 * flex: 1 把取消按钮顶到最右，文字从左边排 —— 像终端里的一行状态，读起来最稳。
+			 */
+			.toast--progress .toast__text {
+				flex: 1;
+				min-width: 0;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
 			}
 
 			/* 深色底上的次级按钮；触控目标仍按约定做到 ≥ 44px */
@@ -1614,8 +1653,16 @@
 			<div id="dropzone" class="dropzone" x-show="dragging" x-transition.opacity aria-label="Drop files to upload">
 				松手即可上传到当前目录
 			</div>
-			<div id="toast" class="toast" x-show="toast" x-transition.opacity role="status" aria-live="polite">
-				<span x-text="toast"></span>
+			<div
+				id="toast"
+				class="toast"
+				x-show="toast"
+				x-transition.opacity
+				role="status"
+				aria-live="polite"
+				:class="{ 'toast--progress': toastProgress || !!archiveAbort }"
+			>
+				<span class="toast__text" x-text="toast"></span>
 				<!-- 打包 / 解压是多请求、非原子的长任务，必须给一个真的能停下来的出口。
 				     只在归档进行中出现，平时不影响提示条的宽度。 -->
 				<button
@@ -1690,6 +1737,10 @@
 					pressFired: false,
 					dragging: false,
 					toast: '',
+					// 提示条当前要不要按「进度」显示（定宽，见 CSS 里 .toast--progress 的注释）。
+					// 置位可以在可见时发生（顶多跳一下），**复位只在提示条隐藏时做** —— 收尾那一刻
+					// 要是宽度变了，会看到它先缩回去再消失。
+					toastProgress: false,
 					sheet: null,
 					confirmTarget: null,
 					uploadConflicts: null,
@@ -2503,6 +2554,11 @@
 
 					async upload(files, options) {
 						if (files.length === 0) return;
+						// 批量上传每传完一个就换一条提示，还带着文件名，长短差很多 —— 先进定宽态。
+						// 放在第一条提示之前置位：整个上传过程里宽度只定一次，之后不再变。
+						// 单个文件只换一次文字（"上传中" → "已上传"），跟别的普通提示没区别，
+						// 不值得为它把提示条撑成一条宽栏。
+						if (files.length > 1) this.toastProgress = true;
 						// 不传 options 时先按"不允许覆盖"上传：让服务端在重名时回 412，
 						// 而不是静默替掉用户已有的文件。用 If-None-Match 而不是先发 HEAD 探测，
 						// 是因为由服务端原子判定没有竞态窗口（探测与写入之间可能被人抢先建同名文件）。
@@ -2595,6 +2651,8 @@
 					 */
 					notifySticky(message) {
 						clearTimeout(this.toastTimer);
+						// 打包 / 解压的进度正是「文字不停换」的那种提示，必须进定宽态
+						this.toastProgress = true;
 						this.toast = message;
 					},
 
@@ -2602,7 +2660,12 @@
 						if (kind) buzz(kind);
 						this.toast = message;
 						clearTimeout(this.toastTimer);
-						this.toastTimer = setTimeout(() => (this.toast = ''), 2400);
+						this.toastTimer = setTimeout(() => {
+							this.toast = '';
+							// 趁提示条已经隐藏再退出定宽态：可见时改宽度会看到它跳一下。
+							// 收尾那句「已解压 N 个文件」也就跟着保持定宽，不会先缩回去再消失。
+							this.toastProgress = false;
+						}, 2400);
 					},
 				};
 			};
