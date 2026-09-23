@@ -458,6 +458,9 @@ const PAGE_HTML = `<!DOCTYPE html>
 	.panel__sep { width: 1px; height: 24px; background: var(--line); margin: 0 var(--sp-2); flex: none; }
 	.icon-btn--danger { color: var(--danger); }
 	.icon-btn--danger:hover { background: var(--danger-soft); color: var(--danger); }
+	.icon-btn--primary { color: var(--accent); }
+	.icon-btn--primary:hover { background: var(--accent-soft); color: var(--accent); }
+	.icon-btn[disabled] { opacity: 0.5; cursor: default; }
 	.viewer__body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--sp-4); }
 	.viewer--image .viewer__body,
 	.viewer--video .viewer__body { display: flex; align-items: center; justify-content: center; padding: 0; }
@@ -524,7 +527,6 @@ const PAGE_HTML = `<!DOCTYPE html>
 		font: inherit;
 		font-size: 16px; /* ≥16px，避免 iOS 聚焦输入框时自动放大页面 */
 	}
-	.editor__input:read-only { background: var(--bg); color: var(--ink-60); }
 	.editor__input:focus,
 	.editor__text:focus { border-color: var(--accent); outline: none; }
 	.editor__text {
@@ -619,6 +621,7 @@ const PAGE_HTML = `<!DOCTYPE html>
 	<symbol id="i-delete" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></symbol>
 	<symbol id="i-warning" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></symbol>
 	<symbol id="i-add" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></symbol>
+	<symbol id="i-save" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></symbol>
 	<symbol id="i-note-add" viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"/></symbol>
 	<symbol id="i-edit" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></symbol>
 </svg>
@@ -796,23 +799,26 @@ const PAGE_HTML = `<!DOCTYPE html>
 		:aria-label="editor.href ? '编辑 ' + editor.name : '新建文本文件'">
 		<div class="editor__bar">
 			<span class="editor__title" x-text="editor.href ? editor.name : '新建文本文件'"></span>
-			<button class="btn" @click="saveEditor()" :disabled="editor.busy"
-				x-text="editor.busy ? '保存中…' : (editor.conflict ? '覆盖保存' : '保存')"></button>
+			<button class="icon-btn" :class="editor.conflict ? 'icon-btn--danger' : 'icon-btn--primary'"
+				@click="saveEditor()" :disabled="editor.busy" title="保存" aria-label="保存">
+				<svg class="icon" aria-hidden="true"><use href="#i-save"></use></svg>
+			</button>
 			<span class="panel__sep" aria-hidden="true"></span>
 			<button class="icon-btn" @click="requestCloseEditor()" aria-label="关闭编辑器">
 				<svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg>
 			</button>
 		</div>
 		<div class="editor__body">
-			<label class="editor__field">
+			<!-- 编辑已有文件时标题已经显示文件名，且这里本来也不可改，就不重复占一行 -->
+			<label class="editor__field" x-show="!editor.href">
 				<span class="editor__label">文件名</span>
-				<input class="editor__input" type="text" x-model="editor.name" :readonly="!!editor.href"
+				<input class="editor__input" type="text" x-model="editor.name"
 					placeholder="untitled.txt" autocomplete="off" autocapitalize="off" spellcheck="false">
 			</label>
 			<textarea class="editor__text" x-model="editor.text" spellcheck="false"
 				placeholder="在这里输入内容…" @input="editor.dirty = true"></textarea>
 			<p class="editor__error" x-show="editor.error" x-text="editor.error"></p>
-			<p class="editor__warn" x-show="editor.conflict">已存在同名文件，再点一次“覆盖保存”将替换其内容。</p>
+			<p class="editor__warn" x-show="editor.conflict">同名文件已存在，再点一次保存会覆盖它。</p>
 			<template x-if="editor.confirmDiscard">
 				<div class="editor__discard">
 					<span>有未保存的内容，确定放弃？</span>
