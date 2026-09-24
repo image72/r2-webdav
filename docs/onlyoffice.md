@@ -23,13 +23,18 @@ office-website（浏览器）                     r2-webdav（Worker）
   ├─ GET  /onlyoffice/session?path=/a.docx ───▶│  Basic 鉴权，换 token
   │◀── { url, saveUrl, key, fileType, … } ─────┤
   │                                            │
-  ├─ GET  /onlyoffice/doc/<read-token>  ──────▶│  签名校验 → 读 R2（裸 fetch 可用）
+  ├─ GET  /onlyoffice/doc/<read-token>  ──────▶│  签名校验 → 以 WebDAV 客户端身份 GET
   │◀── 文件字节 ────────────────────────────────┤
   │   （x2t 在浏览器里转换、编辑）              │
   │                                            │
-  ├─ PUT  /onlyoffice/doc/<write-token> ──────▶│  签名校验 → 覆盖写回 R2（路径只来自 token）
+  ├─ PUT  /onlyoffice/doc/<write-token> ──────▶│  签名校验 → 以 WebDAV 客户端身份 PUT
   │◀── { ok, size, etag, key } ────────────────┤
 ```
+
+adapter **不碰 bucket**：读写都在 HTTP 层发生（`HEAD` / `GET` / `PUT` 到文件自己的 URL，
+带上服务自身的 Basic 凭据），等价于“一个有权限的 WebDAV 客户端”。所以写入路径与其它
+客户端完全一致（父目录补建、影子文件过滤、PUT 前置条件都由 WebDAV 那层负责），也不会
+绕过 WebDAV 的规则去动它背后的数据。
 
 ## 两种模式（靠 secret 自动切换，客户端接口一模一样）
 
@@ -40,7 +45,7 @@ office-website（浏览器）                     r2-webdav（Worker）
 |                   | 直连（默认，不配 secret） | 签名（配了 `ONLYOFFICE_HMAC_SECRET`） |
 | ----------------- | ------------------------- | ------------------------------------- |
 | `url` / `saveUrl` | 文件自己的 WebDAV 地址    | `/onlyoffice/doc/<短期 HMAC 短链>`    |
-| 打开 / 保存       | 原生 `GET` / `PUT`        | adapter 校验签名后读写 R2             |
+| 打开 / 保存       | 原生 `GET` / `PUT`        | adapter 校验签名后转发为 WebDAV `GET` / `PUT` |
 | 授权              | 浏览器**已缓存的 Basic**  | 短链自带签名，不需要凭据              |
 | 前提              | **与 WebDAV 同源**        | 无（跨源可用）                        |
 

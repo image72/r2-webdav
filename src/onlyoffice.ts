@@ -12,6 +12,16 @@
  *   2. 保存：一个能接收编辑结果字节的写入端点。编辑器在浏览器里跑完转换后，由宿主页面
  *      把结果 POST/PUT 回来。
  *
+ * 本模块是 WebDAV 服务的**普通客户端**：所有读写在 HTTP 层发起（HEAD / GET / PUT 到文件
+ * 自己的 URL，带上服务自身的 Basic 凭据），**绝不碰 bucket**。好处是写入路径与其它客户端
+ * 完全一致（父目录补建、影子文件过滤、PUT 前置条件都由 WebDAV 那层负责），也不会绕过
+ * WebDAV 的规则去动它背后的数据。类型上 `OnlyOfficeEnv` 里根本没有 bucket —— 想碰也碰不到。
+ *
+ * 代价：每次操作多 1~2 个子请求（它们计入 Worker 的子请求配额）。
+ *
+ * token 的签发/校验原语在 signing.ts —— 那层是所有浏览器在线服务（drawio、Photopea…）
+ * 共用的，不专属于 ONLYOFFICE。
+ *
  * 两种模式（用有没有配 `ONLYOFFICE_HMAC_SECRET` 自动切换，客户端接口完全一样）：
  *
  *   直连（默认）：`url` / `saveUrl` 就是该文件自己的 WebDAV 地址 —— 打开走原生 GET、
@@ -29,6 +39,8 @@
  */
 
 import { encode_path } from './r2';
+import { hex, json_response, mint_token, verify_token } from './signing';
+import type { TokenPayload } from './signing';
 
 /** 签名模式下带 token 的路径前缀；index.ts 靠它决定哪些请求可以跳过 Basic 鉴权。 */
 export const ONLYOFFICE_TOKEN_PREFIX = '/onlyoffice/doc/';
@@ -68,28 +80,16 @@ const EXTENSION_TYPES: Record<string, { documentType: string; contentType: strin
 };
 
 export type OnlyOfficeEnv = {
-	bucket: R2Bucket;
+	/** WebDAV 服务自身的账号：adapter 以普通客户端身份发子请求时用它鉴权 */
+	USERNAME: string;
+	PASSWORD: string;
 	/**
 	 * 配了它 → 签名模式（发短期短链，跨源可用）；不配 → 直连模式（给原生 WebDAV 地址，
 	 * 要求编辑器与 WebDAV 同源，靠浏览器已缓存的 Basic 凭据）。
 	 */
 	ONLYOFFICE_HMAC_SECRET?: string;
-	/** 编辑器与 Worker 不同源（或前面挂了反代）时，对外暴露的基址，例如 https://dav.example.com */
+	/** 对外暴露的基址（编辑器与 Worker 不同源、或前面挂了反代时用），例如 https://dav.example.com */
 	ONLYOFFICE_BASE_URL?: string;
-};
-
-type TokenMode = 'read' | 'write';
-
-type TokenPayload = {
-	/** R2 key，不带前导斜杠 */
-	path: string;
-	mode: TokenMode;
-	/** 过期时间（秒） */
-	expires: number;
-	/** 交给编辑器的 document.key：同一版本稳定、内容一变就变 */
-	key: string;
-	/** 文件名，用于 Content-Disposition 与调试 */
-	title: string;
 };
 
 /**
@@ -160,16 +160,24 @@ async function create_session(request: Request, env: OnlyOfficeEnv): Promise<Res
 		);
 	}
 
-	const head = await env.bucket.head(path);
-	if (head === null) {
+	const head = await webdav_fetch(env, request, path, { method: 'HEAD' });
+	if (head.status === 404) {
 		// 打开一个不存在的文件没有意义，而且会让"保存时凭空造出新文件"变得难以解释
 		return json_response({ error: `文件不存在：/${path}` }, 404);
 	}
+	if (!head.ok) {
+		return json_response({ error: `WebDAV 探测失败：${head.status}` }, 502);
+	}
 
 	const title = path.slice(path.lastIndexOf('/') + 1);
-	const key = await version_key(path, head.httpEtag);
+	// 版本标识：优先 ETag；上游如果没给（非本服务实现的 WebDAV 可能会这样），退化成
+	// Last-Modified + 长度 —— 关键是“内容一变它就变”，否则编辑器会一直用缓存里的旧内容。
+	const etag = head.headers.get('etag');
+	const size = Number(head.headers.get('content-length') ?? 0);
+	const version = etag ?? `${head.headers.get('last-modified') ?? ''}:${size}`;
+	const key = await version_key(path, version);
 	const now = Math.floor(Date.now() / 1000);
-	const base = (env.ONLYOFFICE_BASE_URL ?? url.origin).replace(/\/+$/, '');
+	const base = webdav_base(env, request);
 	const secret = env.ONLYOFFICE_HMAC_SECRET;
 
 	// 编辑器 document.key 的语义是"文档版本"：同一版本必须稳定（否则会重复下载），
@@ -209,8 +217,8 @@ async function create_session(request: Request, env: OnlyOfficeEnv): Promise<Res
 		// 便于调用方展示与排查：direct = 靠同源 Basic；signed = 靠短链签名
 		mode: secret === undefined ? 'direct' : 'signed',
 		path: `/${path}`,
-		size: head.size,
-		etag: head.httpEtag,
+		size,
+		etag,
 		...(secret === undefined ? {} : { readExpiresAt: now + READ_TTL_SECONDS, writeExpiresAt: now + WRITE_TTL_SECONDS }),
 	});
 }
@@ -225,23 +233,21 @@ async function read_document(request: Request, env: OnlyOfficeEnv, secret: strin
 		return json_response({ error: 'token 无效、已过期或方向不对' }, 403);
 	}
 
-	if (request.method === 'HEAD') {
-		const head = await env.bucket.head(payload.path);
-		if (head === null) {
-			return new Response(null, { status: 404 });
-		}
-		return new Response(null, { status: 200, headers: document_headers(payload, head) });
-	}
-
-	const object = await env.bucket.get(payload.path);
-	if (object === null) {
+	const method = request.method === 'HEAD' ? 'HEAD' : 'GET';
+	const upstream = await webdav_fetch(env, request, payload.path, { method });
+	if (upstream.status === 404) {
 		return json_response({ error: '文件已不存在（可能已被删除或改名）' }, 404);
 	}
+	if (!upstream.ok) {
+		return json_response({ error: `WebDAV 读取失败：${upstream.status}` }, 502);
+	}
 
-	return new Response(object.body, {
-		status: 200,
-		headers: { ...document_headers(payload, object), 'Content-Length': object.size.toString() },
-	});
+	const headers = document_headers(payload, upstream.headers.get('etag'));
+	const length = upstream.headers.get('content-length');
+	if (length !== null) {
+		headers['Content-Length'] = length;
+	}
+	return new Response(method === 'HEAD' ? null : upstream.body, { status: 200, headers });
 }
 
 // ---------------------------------------------------------------------------
@@ -273,86 +279,53 @@ async function write_document(request: Request, env: OnlyOfficeEnv, secret: stri
 	}
 
 	const contentType = EXTENSION_TYPES[extension_of(payload.path)]?.contentType ?? 'application/octet-stream';
-	// 流式写入，不把整份文档读进内存
-	const stored = await env.bucket.put(payload.path, request.body, { httpMetadata: { contentType } });
-	if (stored === null) {
-		return json_response({ error: '写入失败' }, 500);
+	// 走标准 WebDAV PUT：body 直接流式转发，不落内存，也不自己写存储
+	const upstream = await webdav_fetch(env, request, payload.path, {
+		method: 'PUT',
+		body: request.body,
+		headers: { 'Content-Type': contentType },
+	});
+	if (!upstream.ok) {
+		return json_response({ error: `WebDAV 保存失败：${upstream.status}` }, 502);
 	}
 
+	// 再探一次元数据，把新的 etag / key 回给宿主页面（内容变了，key 就该变）
+	const head = await webdav_fetch(env, request, payload.path, { method: 'HEAD' });
+	const etag = head.headers.get('etag');
 	return json_response({
 		ok: true,
 		path: `/${payload.path}`,
-		size: stored.size,
-		etag: stored.httpEtag,
-		// 内容变了 → key 变了；宿主页面若想接着编辑，用这个新 key 重开会话
-		key: await version_key(payload.path, stored.httpEtag),
+		status: upstream.status,
+		size: Number(head.headers.get('content-length') ?? 0),
+		etag,
+		key: etag === null ? null : await version_key(payload.path, etag),
 	});
+}
+
+// ---------------------------------------------------------------------------
+// 以 WebDAV 客户端身份访问文件（唯一的读写通道）
+// ---------------------------------------------------------------------------
+
+/** 对外基址：默认就是本次请求的 origin，也就是这个 WebDAV 服务自己。 */
+function webdav_base(env: OnlyOfficeEnv, request: Request): string {
+	return (env.ONLYOFFICE_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, '');
+}
+
+/**
+ * 向 WebDAV 服务发一个**普通 HTTP 子请求**（带服务自身的 Basic 凭据）。
+ *
+ * 这是本模块唯一的读写通道：不碰 bucket、不绕过 WebDAV 层 —— 父目录补建、影子文件过滤、
+ * PUT 前置条件这些规则因此和其它客户端走的是同一条路径。
+ */
+function webdav_fetch(env: OnlyOfficeEnv, request: Request, path: string, init: RequestInit = {}): Promise<Response> {
+	const headers = new Headers(init.headers);
+	headers.set('Authorization', `Basic ${btoa(`${env.USERNAME}:${env.PASSWORD}`)}`);
+	return fetch(`${webdav_base(env, request)}/${encode_path(path)}`, { ...init, headers });
 }
 
 // ---------------------------------------------------------------------------
 // token 与路径工具
 // ---------------------------------------------------------------------------
-
-async function mint_token(secret: string, payload: TokenPayload): Promise<string> {
-	const body = base64url_encode(new TextEncoder().encode(JSON.stringify(payload)));
-	const signature = await crypto.subtle.sign('HMAC', await hmac_key(secret), new TextEncoder().encode(body));
-	return `${body}.${base64url_encode(new Uint8Array(signature))}`;
-}
-
-/** 校验签名、方向与过期时间。签名比较交给 crypto.subtle.verify（恒定时间）。 */
-async function verify_token(secret: string, token: string, mode: TokenMode): Promise<TokenPayload | null> {
-	const dot = token.lastIndexOf('.');
-	if (dot <= 0) {
-		return null;
-	}
-	const body = token.slice(0, dot);
-	const signature = base64url_decode(token.slice(dot + 1));
-	if (signature === null) {
-		return null;
-	}
-	const valid = await crypto.subtle.verify('HMAC', await hmac_key(secret), signature, new TextEncoder().encode(body));
-	if (!valid) {
-		return null;
-	}
-
-	const raw = base64url_decode(body);
-	if (raw === null) {
-		return null;
-	}
-	let payload: TokenPayload;
-	try {
-		payload = JSON.parse(new TextDecoder().decode(raw)) as TokenPayload;
-	} catch {
-		return null;
-	}
-	if (payload.mode !== mode) return null;
-	if (typeof payload.expires !== 'number' || payload.expires * 1000 <= Date.now()) return null;
-	if (typeof payload.path !== 'string' || payload.path === '') return null;
-	return payload;
-}
-
-/**
- * CryptoKey 缓存。
- *
- * 同一 isolate 内会反复用到同一把密钥，而 importKey 是异步的、每次请求都做一遍纯属浪费。
- * 按 secret 缓存 promise，重复请求直接复用。
- */
-const key_cache = new Map<string, Promise<CryptoKey>>();
-
-function hmac_key(secret: string): Promise<CryptoKey> {
-	let cached = key_cache.get(secret);
-	if (cached === undefined) {
-		cached = crypto.subtle.importKey(
-			'raw',
-			new TextEncoder().encode(secret),
-			{ name: 'HMAC', hash: 'SHA-256' },
-			false,
-			['sign', 'verify'],
-		);
-		key_cache.set(secret, cached);
-	}
-	return cached;
-}
 
 /** 同一个 key 的版本标识：内容一变它就变，编辑器据此决定要不要重新下载。 */
 async function version_key(path: string, etag: string): Promise<string> {
@@ -386,43 +359,14 @@ function extension_of(path: string): string {
  * 必须返回**普通对象**：`{ ...new Headers(...) }` 得到的是空对象（Headers 的条目在内部
  * 迭代器里，不是自有可枚举属性），会把 Content-Type / ETag 全部丢掉。
  */
-function document_headers(payload: TokenPayload, object: R2Object | R2ObjectBody): Record<string, string> {
+function document_headers(payload: TokenPayload, etag: string | null): Record<string, string> {
 	const extension = extension_of(payload.path);
 	return {
 		'Content-Type': EXTENSION_TYPES[extension]?.contentType ?? 'application/octet-stream',
-		ETag: object.httpEtag,
+		...(etag === null ? {} : { ETag: etag }),
 		// 文件名用 RFC 5987 形式，中文名不会变成乱码
 		'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(payload.title)}`,
 		// 短链 + 签名，不该进任何缓存
 		'Cache-Control': 'no-store',
 	};
-}
-
-function json_response(body: unknown, status = 200): Response {
-	return new Response(JSON.stringify(body), {
-		status,
-		headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
-	});
-}
-
-function base64url_encode(bytes: Uint8Array): string {
-	let binary = '';
-	for (const byte of bytes) binary += String.fromCharCode(byte);
-	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function base64url_decode(value: string): Uint8Array | null {
-	try {
-		const padded = value.replace(/-/g, '+').replace(/_/g, '/');
-		const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
-		const bytes = new Uint8Array(binary.length);
-		for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-		return bytes;
-	} catch {
-		return null;
-	}
-}
-
-function hex(bytes: Uint8Array): string {
-	return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
