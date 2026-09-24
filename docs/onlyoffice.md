@@ -42,7 +42,7 @@ adapter **不碰 bucket**：读写都在 HTTP 层发生（`HEAD` / `GET` / `PUT`
 两个 URL 直接就是文件自己的 WebDAV 地址（打开 = 原生 GET、保存 = 原生 PUT）——
 同源请求浏览器的 `fetch()` 会自动补上已缓存的 Basic 凭据。
 
-|                   | 直连（默认，不配 secret） | 签名（配了 `ONLYOFFICE_HMAC_SECRET`） |
+|                   | 直连（默认，不配 secret） | 签名（配了 `SIGNING_SECRET`）         |
 | ----------------- | ------------------------- | ------------------------------------- |
 | `url` / `saveUrl` | 文件自己的 WebDAV 地址    | `/onlyoffice/doc/<短期 HMAC 短链>`    |
 | 打开 / 保存       | 原生 `GET` / `PUT`        | adapter 校验签名后转发为 WebDAV `GET` / `PUT` |
@@ -94,11 +94,12 @@ adapter **不碰 bucket**：读写都在 HTTP 层发生（`HEAD` / `GET` / `PUT`
 # 直连模式（编辑器与 WebDAV 同源）：什么都不用配
 
 # 签名模式（跨源，例如 office-website 部署在 pages.dev、WebDAV 在 workers.dev）：
-# 加一个密钥即可，客户端接口不变，不需要改任何调用代码
-npx wrangler secret put ONLYOFFICE_HMAC_SECRET
+# 加一个密钥即可，客户端接口不变，不需要改任何调用代码。
+# 这个密钥是所有浏览器在线服务（drawio、Photopea…）共用的，配一次就行。
+npx wrangler secret put SIGNING_SECRET
 ```
 
-可选：`ONLYOFFICE_BASE_URL` —— 编辑器与 Worker 不同源、或前面挂了反代时，用它指定
+可选：`EMBED_BASE_URL` —— 服务与 Worker 不同源、或前面挂了反代时，用它指定
 对外暴露的基址（否则用请求的 origin 拼 URL）。
 
 ## 自测（不需要浏览器）
@@ -168,6 +169,6 @@ curl -su $AUTH $BASE/oo/a.docx | head -c 16
 
 1. 删 `src/onlyoffice.ts`；
 2. `src/index.ts` 里搜 `ONLYOFFICE`，删掉三处接线（import、`Env` 里两个字段、鉴权旁路与分发那两行）；
-3. 有 secret 的话 `npx wrangler secret delete ONLYOFFICE_HMAC_SECRET`。
+3. 有 secret 的话 `npx wrangler secret delete SIGNING_SECRET`（如果还有别的在线服务在用它，就别删）。
 
 其余代码（WebDAV、页面、归档）与它没有任何耦合。

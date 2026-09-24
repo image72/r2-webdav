@@ -25,10 +25,11 @@ export interface Env {
 	USERNAME: string;
 	PASSWORD: string;
 
-	// ONLYOFFICE 适配层：不配 ONLYOFFICE_HMAC_SECRET 时 /onlyoffice/* 一律 501（功能等于关着）。
-	// ONLYOFFICE_BASE_URL 可选，只在编辑器与 Worker 不同源、或前面挂了反代时才需要。
-	ONLYOFFICE_HMAC_SECRET?: string;
-	ONLYOFFICE_BASE_URL?: string;
+	// 浏览器在线服务（ONLYOFFICE、drawio、Photopea…）**共用**的签名密钥：配了它就启用
+	// `/embed/*` 这类「无凭据短链」路由；不配则所有服务都退回直连模式（要求同源）。
+	SIGNING_SECRET?: string;
+	// 对外暴露的基址（服务与 Worker 不同源、或前面挂了反代时用），例如 https://dav.example.com
+	EMBED_BASE_URL?: string;
 }
 
 function is_authorized(authorization_header: string, username: string, password: string): boolean {
@@ -44,12 +45,12 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const { bucket } = env;
 
-		// 只在**签名模式**（配了 ONLYOFFICE_HMAC_SECRET）下才跳过 Basic：那边的调用方是
-		// 浏览器里的 ONLYOFFICE（裸 fetch 取文件、PUT 保存），跨源时它带不了 Basic 凭据，
-		// 由 URL 里的 HMAC token 负责校验。直连模式没有这条路由，绝不能开这个口子
-		// （否则未鉴权的请求会直接落到 WebDAV 的 GET/PUT 上）。
+		// 只在**签名模式**（配了 SIGNING_SECRET）下才跳过 Basic：那边的调用方是浏览器里的
+		// 在线服务（裸 fetch 取文件、PUT 保存），跨源时它带不了 Basic 凭据，由 URL 里的
+		// HMAC token 负责校验。直连模式没有这条路由，绝不能开这个口子（否则未鉴权的请求
+		// 会直接落到 WebDAV 的 GET/PUT 上）。
 		const is_onlyoffice_token_request =
-			env.ONLYOFFICE_HMAC_SECRET !== undefined && new URL(request.url).pathname.startsWith(ONLYOFFICE_TOKEN_PREFIX);
+			env.SIGNING_SECRET !== undefined && new URL(request.url).pathname.startsWith(ONLYOFFICE_TOKEN_PREFIX);
 		if (
 			request.method !== 'OPTIONS' &&
 			!is_onlyoffice_token_request &&
