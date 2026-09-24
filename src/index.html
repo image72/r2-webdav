@@ -67,18 +67,8 @@
 				outline: 2px solid var(--accent);
 				outline-offset: 2px;
 			}
-			/*
-			 * 按钮 / 动作项一律禁止选中文字。
-			 *
-			 * 手机上按住 500ms 会触发系统的选中与取词，蓝色高亮直接压在按钮文字上 —— 它和
-			 * 「长按弹出操作面板」是同时发生的，看着像界面坏了。这些元素都是按一下就执行的，
-			 * 本来也没有需要复制的文字。
-			 *
-			 * 只挑「动作」元素，别图省事写成 `a` 或整个面板：
-			 *  - markdown 预览里的 <a> 是正文的一部分，禁掉会让整段选中时跳过链接文字；
-			 *  - input / textarea / 预览正文必须保持可选中（改名就是要进去改字的）。
-			 * 提示条文字也不禁 —— 复制链接失败时那条 URL 就是让用户自己选中拷的。
-			 */
+			/* 只对「动作」元素禁止选中（长按会触发系统取词）。不要写成 `a` 或整个面板：
+			   markdown 正文里的 <a>、input / textarea / 预览正文、提示条文字都必须保持可选中。 */
 			button,
 			.crumb,
 			.icon-btn,
@@ -114,7 +104,7 @@
 				min-height: 100dvh;
 			}
 
-			/* 顶栏：面包屑就是标题（52px 一行），不再单独占一行静态应用名 */
+			/* 顶栏：面包屑就是标题 */
 			.app-bar {
 				position: sticky;
 				top: 0;
@@ -223,10 +213,7 @@
 			.row:active {
 				background: var(--bg);
 			}
-			/*
-			 * 长按中的反馈。iOS 上 navigator.vibrate 不可用，给不了 3D Touch 那种触感，
-			 * 就只能靠底色变化：否则按住这 500ms 界面毫无反应，用户会以为手势没生效。
-			 */
+			/* 长按中的反馈：iOS 没有 navigator.vibrate，这 500ms 只能靠底色变化给反馈。 */
 			.row--pressing {
 				background: var(--bg);
 			}
@@ -490,13 +477,8 @@
 			.sheet--new-folder .editor__error {
 				padding: var(--sp-2) var(--sp-3) 0;
 			}
-			/*
-				标题即改名入口：不新增按钮，靠标题本身承载（面板宽 366px，比预览栏的 133px 宽得多）。
-
-				它和下面的 .sheet__rename-input 必须**高度完全一致**：面板是底部吸附的
-				（left/right/bottom = 0），内容一旦变高，整块面板就往上跳。
-				输入框原来是 50px、标题 47px，切到编辑态时会看到面板硬跳 3px。
-			*/
+			/* 标题即改名入口。它和下面的 .sheet__rename-input 必须高度完全一致：
+			   面板底部吸附（left/right/bottom = 0），内容一变高整块面板就往上跳。 */
 			.sheet__title--edit {
 				display: flex;
 				align-items: center;
@@ -524,13 +506,7 @@
 				font-weight: 600;
 				font-size: 16px; /* ≥16px，避免 iOS 聚焦输入框时自动放大页面 */
 			}
-			/*
-				聚焦只靠边框变色表示，**不开 outline**。
-				否则会与上面的 border 叠成两圈：全局 :focus-visible 是
-				`outline: 2px solid var(--accent); outline-offset: 2px`，
-				和 accent 色的 border 一起就是「边框 + 分离的一圈」，看着像画了两层。
-				项目里 .editor__input:focus 就是这个约定，这里保持一致。
-			*/
+			/* 聚焦只靠边框变色，不开 outline —— 会和 border 叠成两圈（同 .editor__input:focus）。 */
 			.sheet__rename-input:focus {
 				border-color: var(--accent);
 				outline: none;
@@ -588,10 +564,8 @@
 				text-overflow: ellipsis;
 				white-space: nowrap;
 			}
-			/* 防误触：关闭固定在最右，往左依次是下载、复制链接（中间隔一条分隔线），再往左是「编辑」。
-	   「编辑」只在文本类文件上出现，位置就在原来删除的位置。删除已从预览栏移除 ——
-	   它现在只出现在列表的「更多」菜单里，不再和关闭按钮同屏，想误触也碰不到。
-	   相邻 44px 目标之间留 8px。 */
+			/* 防误触：关闭固定最右，往左是下载、复制链接（隔一条分隔线），最左是「编辑」（仅文本类文件）；
+			   相邻 44px 目标之间留 8px。 */
 			.viewer__actions {
 				display: flex;
 				align-items: center;
@@ -740,10 +714,7 @@
 				text-overflow: ellipsis;
 				white-space: nowrap;
 			}
-			/*
-			 * 「未保存」标记。dirty 原来只用来决定要不要弹「放弃」确认，界面上完全看不出来 ——
-			 * 而「查看」渲染的正是**未保存**的内容，不给标记的话用户会以为文件已经改好了。
-			 */
+			/* 「未保存」标记：查看态渲染的就是未保存的内容，必须有标记。 */
 			.editor__dirty {
 				flex: none;
 				font-size: 12px;
@@ -793,11 +764,8 @@
 				line-height: 1.6;
 			}
 
-			/*
-			 * 「查看」面板。尺寸规则必须与 .editor__text **完全一致**。
-			 * .editor 是从底部吸附的（left/right/bottom = 0），内容高 1px 整块面板就往上挪 1px，
-			 * 而高度没有过渡——看着就是硬跳一下。两者共用 flex:1 + min-height:45dvh，切换时高度不变。
-			 */
+			/* 「查看」面板：尺寸必须与 .editor__text 完全一致（共用 flex:1 + min-height:45dvh），
+			   否则切换时高度变化会硬跳。 */
 			.editor__preview {
 				flex: 1;
 				min-height: 45dvh;
@@ -841,18 +809,8 @@
 				pointer-events: none;
 			}
 
-			/*
-			 * 居中**不用 transform**。
-			 *
-			 * 原来写的是 left: 50% + transform: translateX(-50%)，但 x-transition.opacity 在进场
-			 * 动画期间会往同一个元素上写内联 transform: scale(1)（还带 transform-origin），
-			 * 内联样式压过样式表 —— 于是动画那 150ms 里 translateX(-50%) 整个失效，提示条左边缘
-			 * 就贴在视口中心线上，等过渡结束 Alpine 清掉内联样式，它再硬跳回正中。
-			 * 实测一条 355px 宽的提示会横跳 177px，每次出现都跳一次。
-			 *
-			 * 换成左/右都贴 0 再让 auto 外边距分掉剩余空间：定宽盒子（见下面的 --progress）
-			 * 和不定宽的盒子都能居中，而且跟 transform 完全无关，谁写内联都影响不到。
-			 */
+			/* 居中不用 transform：x-transition.opacity 会在动画期间写内联 transform，把
+			   translateX(-50%) 压掉导致横跳。左右都贴 0 + auto 外边距，与内联样式无关。 */
 			.toast {
 				position: fixed;
 				left: 0;
@@ -865,11 +823,8 @@
 				/* 提示文字 + （归档进行中才有的）取消按钮 */
 				display: flex;
 				align-items: center;
-				/*
-				 * 尺寸刻意压着：提示条是浮在内容上的，宽度和高度都直接从可视区里吃掉一块
-				 * （手机上曾经是 90vw × 68px，很显眼）。字号降一级、内边距各收一档。
-				 * 三种形态（普通提示 / 进度 / 进度+取消）必须一样高，否则浮在内容上会跳。定高 = 行高 12×1.5=18px + 上下各 6px = 30px，所以取消按钮必须 ≤18px（见下）；6px 不在 --sp-* 档位上，是刻意凑这个 30。
-				 */
+				/* 三种形态（普通 / 进度 / 进度+取消）必须一样高：定高 = 行高 18px + 上下各 6px = 30px，
+				   所以取消按钮必须 ≤18px（见下）；6px 不在 --sp-* 档位上，是为了凑这个 30。 */
 				gap: var(--sp-2);
 				padding: 6px var(--sp-3);
 				border-radius: var(--r-md);
@@ -879,16 +834,8 @@
 				box-shadow: 0 8px 24px rgba(15, 23, 42, 0.24);
 			}
 
-			/*
-			 * 进度态：打包 / 解压 / 批量上传这种**会连续换文字**的提示条。
-			 *
-			 * 提示条是居中的（left: 50% + translateX(-50%)），宽度又由内容决定 —— 文字一换长度，
-			 * 盒子就跟着伸缩，两个边一起往外跑。实测同一屏宽下，从「链接已复制」到一条带长文件名的
-			 * 上传进度，左边缘能横移 126px：看着就是提示条在左右乱晃。
-			 *
-			 * 进度态里把宽度钉死，只换文字。320px 是「够放一条进度 + 不那么占屏」的取中：
-			 * 比桌面端面板（min(420px, 92vw)）窄得多，实测最长的归档文案也放得下。
-			 */
+			/* 进度态：文字长度会连续变化，而提示条是居中的、宽度由内容决定 —— 不钉死宽度就会左右乱晃。
+			   320px = 够放一条进度又不占屏。 */
 			.toast--progress {
 				width: min(320px, 90vw);
 			}
@@ -904,15 +851,8 @@
 				white-space: nowrap;
 			}
 
-			/*
-			 * 深色底上的次级按钮。
-			 *
-			 * 视觉尺寸收到和一行文字一样高（18px）：44px 的触控目标会把提示条从 30px 撑到 60px，
-			 * 用「三种形态一样高」与紧凑换它不划算；而且「取消」是中止长任务的动作，小一点
-			 * 反而不容易误触。
-			 * 但可点区域不真的只有 18px —— 用 ::after 撑到 30px，并且**不外扩到提示条之外**
-			 * （正好吃掉上下各 6px 的内边距），所以点提示条边缘不会莫名取消。
-			 */
+			/* 深色底上的次级按钮：视觉 18px（与提示条定高一致），可点区域用 ::after 撑到 30px，
+			   且不外扩到提示条之外 —— 点提示条边缘不会莫名取消。 */
 			.toast__cancel {
 				position: relative;
 				flex: none;
@@ -1229,15 +1169,7 @@
 			<template x-if="newMenu">
 				<div id="new-menu-panel" class="sheet sheet--new open" role="dialog" aria-modal="true" aria-label="New">
 					<span class="sheet__title">新建</span>
-					<!--
-				排序依据（自上而下 = 从外到内、从容器到内容）：
-				1. 上传文件 —— 最常用的动作，也是空目录页的主动作（「上传第一个文件」），
-				   离触发点（右下角 FAB）最近，点得最少；
-				2. 新建目录 —— 在服务端就地建容器；
-				3. 新建文本文件 —— 在服务端就地建内容。
-				2 在 3 之前，与列表自身的排序（目录在文件之前）保持一致。
-				取消固定最后，并且单独多留一段间距。
-			-->
+					<!-- 顺序：上传文件 / 新建目录 / 新建文本文件 / 取消（目录在文件之前，与列表一致）。 -->
 					<button
 						id="new-upload-button"
 						class="sheet__item"
@@ -1613,11 +1545,7 @@
 					<span id="editor-dirty-marker" class="editor__dirty" x-show="editor.dirty" aria-label="Unsaved changes">
 						未保存
 					</span>
-					<!-- 「查看」放在保存旁边，但**不关掉编辑器**：改一改 → 看一眼 → 再改，
-					     每次想看效果都得先保存一次（真的写服务器）太别扭了。
-					     图标必须跟着**按钮的动作**走：查看态下它的作用是"回到编辑"，
-					     所以换成铅笔。只靠底色和 title 变化是不够的 —— title 在触屏上根本
-					     看不到，而底色太淡，两种模式看上去就是同一排按钮。 -->
+					<!-- 「查看」不关编辑器；图标跟着按钮动作走（查看态是「回到编辑」，用铅笔）。 -->
 					<button
 						id="editor-preview-button"
 						class="icon-btn"
@@ -1649,7 +1577,6 @@
 					</button>
 				</div>
 				<div class="editor__body">
-					<!-- 编辑已有文件时标题已经显示文件名，且这里本来也不可改，就不重复占一行 -->
 					<label class="editor__field" x-show="!editor.href">
 						<span class="editor__label">文件名</span>
 						<input
@@ -1665,7 +1592,6 @@
 							spellcheck="false"
 						/>
 					</label>
-					<!-- 用 x-show 不用 x-if：textarea 必须留在 DOM 里，否则来回切会丢光标和滚动位置 -->
 					<textarea
 						id="editor-textarea"
 						class="editor__text"
@@ -1735,14 +1661,12 @@
 		</div>
 
 		<script>
-			// 目录打包 / 解压实现在 src/archive.client.js（见那里的注释）。这里只保留页面状态，
-			// 不再内联体积庞大的归档逻辑 —— 那个文件可以整个删掉而不影响页面其它部分。
+			// 目录打包 / 解压在 src/archive.client.js（那个文件可以整块删掉，页面其它部分不受影响）。
 
 			// 与 src/ui.ts 的 MARKDOWN_EXTENSIONS 保持一致。
 			const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'mdown'];
 
-			// markdown-it 实例只建一次。放在组件外面是故意的：Alpine 会深度代理 $data，
-			// 一个带内部状态的渲染器实例被代理后很容易出怪问题（而且白白变慢）。
+			// 放在组件外：Alpine 会深度代理 $data，带内部状态的渲染器实例被代理容易出问题。
 			let markdown_renderer = null;
 
 			// 长按判定：500ms 是 iOS 3D Touch / Android 长按的常规量级；
@@ -1851,7 +1775,6 @@
 						});
 					},
 
-					/** 选中某个条目的操作面板。换条目之前先把待提交的改名落盘。 */
 					/**
 					 * 弹出文件操作面板。
 					 *
@@ -1931,10 +1854,8 @@
 					/**
 					 * 关闭全部面板。
 					 *
-					 * 这里是“点别处 = 保存”的着力点：不能指望 @blur —— 面板是 x-if 渲染的，
-					 * 元素被移出 DOM 时浏览器不补发 blur/focusout（两者实测都不触发）；
-					 * 而在本项目环境里“点非聚焦元素”也不会让输入框失焦。所以每个关闭或切换
-					 * 面板的路径都显式提交一次；值没变则一个请求都不发。
+					 * 不能靠 @blur 提交改名：面板是 x-if 渲染的，元素移出 DOM 时浏览器不补发
+					 * blur/focusout。所以每个关闭 / 切换面板的路径都显式提交一次（值没变则不发请求）。
 					 */
 					closeAllPanels() {
 						this.commitRename();
@@ -2002,8 +1923,7 @@
 					/**
 					 * 常见办公文档可以用在线 ONLYOFFICE 打开。
 					 *
-					 * 扩展名清单由服务端给（就是 adapter 放行的那份），前端不再维护第二份；
-					 * 服务端判断「这个入口能不能真的打开」，打不开就不注入配置，这里自然也不显示。
+					 * 扩展名清单由服务端给（adapter 放行的那份），前端不维护第二份。
 					 */
 					canOpenInOnlyOffice(entry) {
 						if (!entry || entry.isDir || !this.onlyoffice) return false;
@@ -2165,13 +2085,7 @@
 						this.viewer.text = '';
 					},
 
-					/**
-					 * 新建文本文件时的默认名。
-					 *
-					 * 不再固定用 untitled.txt：那个名字只要已存在，新建流程就会立刻撞上重名，
-					 * 而“再点一次保存”确实会把它覆盖掉。这里直接在当前目录的条目里挑一个不冲突的
-					 * 名字（数据已经在手上，不需要额外请求）。
-					 */
+					/** 新建文本文件时的默认名：在当前目录的条目里挑一个不冲突的（数据已在手上，无需额外请求）。 */
 					default_new_name() {
 						const taken = new Set(this.entries.map((entry) => entry.name));
 						if (!taken.has('untitled.txt')) return 'untitled.txt';
@@ -2196,16 +2110,8 @@
 						this.folder = { open: true, name: this.default_folder_name(), busy: false, error: '' };
 					},
 
-					/**
-					 * 新建目录时的默认名。
-					 *
-					 * 和 default_new_name() 同理：不能用固定名，否则第二次新建就必定撞名，
-					 * 而 MKCOL 撞名只会得到一个 405，用户看到的是一句没头没脑的报错。
-					 *
-					 * 用英文而不是中文名：目录名会直接进 URL，中文会被百分号编码成一大串
-					 * %E6%96%B0... ，既难读也难与别人对若。文本文件的默认名本来也是英文
-					 * （untitled.txt），两边风格正好一致。
-					 */
+					/** 新建目录时的默认名：同 default_new_name()（固定名第二次就撞，MKCOL 只会回 405）。
+					 *  用英文是因为目录名会进 URL，中文会编码成一长串 %E6%96%B0…。 */
 					default_folder_name() {
 						const taken = new Set(this.entries.map((entry) => entry.name));
 						if (!taken.has('new-folder')) return 'new-folder';
@@ -2537,8 +2443,7 @@
 					/**
 					 * 在编辑器里切换「查看」。
 					 *
-					 * 刻意**不关编辑器、也不动 editor.text / dirty**：用户要的是改一改 → 看一眼 → 再改。
-					 * 之前想看效果只能先保存（真的写服务器）再退出再预览，而且新建文件时根本无从看起。
+					 * 不关编辑器、也不动 editor.text / dirty —— 要支持改一改 → 看一眼 → 再改。
 					 */
 					async toggleEditorPreview() {
 						if (this.editor.preview) {
@@ -2659,10 +2564,8 @@
 
 					async upload(files, options) {
 						if (files.length === 0) return;
-						// 批量上传每传完一个就换一条提示，还带着文件名，长短差很多 —— 先进定宽态。
-						// 放在第一条提示之前置位：整个上传过程里宽度只定一次，之后不再变。
-						// 单个文件只换一次文字（"上传中" → "已上传"），跟别的普通提示没区别，
-						// 不值得为它把提示条撑成一条宽栏。
+						// 批量上传会连续换提示（还带文件名，长短差很多）——先进定宽态；
+						// 单个文件只换一次文字，不值得把提示条撑成宽栏。
 						if (files.length > 1) this.toastProgress = true;
 						// 不传 options 时先按"不允许覆盖"上传：让服务端在重名时回 412，
 						// 而不是静默替掉用户已有的文件。用 If-None-Match 而不是先发 HEAD 探测，
@@ -2698,9 +2601,8 @@
 						// 重名的分两类：同名文件交给用户确认，同名目录直接跳过
 						// （目录的标记对象若被文件替掉，目录里的内容会变得不可见）
 						//
-						// 先用当前列表做一次快速判断；列表可能过期（别的客户端刚建了同名目录）
-						// 或压根没加载成功，所以列表里没有的一律再向服务器确认一次 ——
-						// 这一步只在出现重名时才发生，代价有限，但能杜绝"把目录覆盖成文件"。
+						// 先用当前列表快速判断；列表可能过期或没加载成功，所以列表里没有的再向服务器确认
+						// 一次 —— 只在出现重名时发生，能杜绝"把目录覆盖成文件"。
 						const dirNames = new Set(this.entries.filter((entry) => entry.isDir).map((entry) => entry.name));
 						const blocked = [];
 						const pending = [];
@@ -2732,8 +2634,7 @@
 							return;
 						}
 
-						// 只留一条提示：toast 只有一个槽位，后面的 notify 会把前面那条盖掉
-						// （曾经因此把"跳过同名目录"盖成了毫无信息量的"已上传 0 个文件"）
+						// 只留一条提示：toast 只有一个槽位，后面的 notify 会盖掉前面那条
 						const parts = [];
 						if (done > 0) parts.push('已上传 ' + done + ' 个文件');
 						if (blocked.length > 0) parts.push('跳过同名目录：' + blocked.map((file) => file.name).join('、'));
