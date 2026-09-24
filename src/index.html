@@ -1,11 +1,14 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 		<meta name="color-scheme" content="light" />
 		<meta name="theme-color" content="#047857" />
 		<title>R2 Storage</title>
+		<script>
+			/*__LOCALES__*/
+		</script>
 		<style>
 			:root {
 				--bg: #f1f5f9;
@@ -127,6 +130,23 @@
 				cursor: pointer;
 			}
 			.icon-btn:hover {
+				background: var(--bg);
+				color: var(--ink);
+			}
+			.lang-select {
+				flex: none;
+				min-height: var(--tap);
+				margin-left: auto;
+				padding: 0 var(--sp-2);
+				border: 0;
+				border-radius: var(--r-sm);
+				background: none;
+				color: var(--ink-60);
+				font: inherit;
+				font-size: 14px;
+				cursor: pointer;
+			}
+			.lang-select:hover {
 				background: var(--bg);
 				color: var(--ink);
 			}
@@ -1014,12 +1034,17 @@
 						</span>
 					</template>
 				</nav>
+				<select class="lang-select" :value="lang" @change="setLang($event.target.value)" aria-label="Language">
+					<template x-for="code in SUPPORTED_LANGS" :key="code">
+						<option :value="code" x-text="code === 'en' ? 'EN' : '中文'" :selected="lang === code"></option>
+					</template>
+				</select>
 				<button
 					id="refresh-button"
 					class="icon-btn"
 					@click="load()"
 					:disabled="loading"
-					title="刷新"
+					:title="t('refresh')"
 					aria-label="Refresh"
 				>
 					<svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
@@ -1041,7 +1066,13 @@
 					></span>
 					<p x-text="error"></p>
 					<div class="state__actions">
-						<button id="retry-button" class="btn btn--ghost" @click="load()" aria-label="Retry">重试</button>
+						<button
+							id="retry-button"
+							class="btn btn--ghost"
+							@click="load()"
+							aria-label="Retry"
+							x-text="t('retry')"
+						></button>
 					</div>
 				</div>
 
@@ -1049,23 +1080,22 @@
 					<span class="state__icon"
 						><svg class="icon" aria-hidden="true"><use href="#i-warning"></use></svg
 					></span>
-					<p>目录成员过多，只列出前 3000 项；未列出的内容请用更具体的路径访问。</p>
+					<p x-text="t('tooManyEntries')"></p>
 				</div>
 
 				<div class="state" x-show="!loading && !error && entries.length === 0">
 					<span class="state__icon"
 						><svg class="icon" aria-hidden="true"><use href="#i-folder-open"></use></svg
 					></span>
-					<p>这个目录还是空的</p>
+					<p x-text="t('emptyDir')"></p>
 					<div class="state__actions">
 						<button
 							id="upload-first-button"
 							class="btn btn--ghost"
 							@click="pickerRef().click()"
 							aria-label="Upload a file"
-						>
-							上传第一个文件
-						</button>
+							x-text="t('upload')"
+						></button>
 					</div>
 				</div>
 
@@ -1114,7 +1144,7 @@
 			</main>
 
 			<button id="new-button" class="fab" @click="openNewMenu()" aria-label="New">
-				<svg class="icon" aria-hidden="true"><use href="#i-add"></use></svg><span>新建</span>
+				<svg class="icon" aria-hidden="true"><use href="#i-add"></use></svg><span x-text="t('new')"></span>
 			</button>
 			<input
 				id="file-input"
@@ -1138,20 +1168,22 @@
 
 			<template x-if="newMenu">
 				<div id="new-menu-panel" class="sheet sheet--new open" role="dialog" aria-modal="true" aria-label="New">
-					<span class="sheet__title">新建</span>
+					<span class="sheet__title" x-text="t('new')"></span>
 					<button
 						id="new-upload-button"
 						class="sheet__item"
 						@click="newMenu = false; pickerRef().click()"
 						aria-label="Upload files"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg><span>上传文件</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg
+						><span x-text="t('uploadFiles')"></span>
 					</button>
 					<button id="new-folder-button" class="sheet__item" @click="openFolder()" aria-label="New folder">
-						<svg class="icon" aria-hidden="true"><use href="#i-folder"></use></svg><span>新建目录</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-folder"></use></svg><span x-text="t('newFolder')"></span>
 					</button>
 					<button id="new-text-button" class="sheet__item" @click="openEditor()" aria-label="New text file">
-						<svg class="icon" aria-hidden="true"><use href="#i-note-add"></use></svg><span>新建文本文件</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-note-add"></use></svg
+						><span x-text="t('newTextFile')"></span>
 					</button>
 					<button
 						id="new-cancel-button"
@@ -1159,7 +1191,7 @@
 						@click="newMenu = false"
 						aria-label="Cancel"
 					>
-						取消
+						<span x-text="t('cancel')"></span>
 					</button>
 				</div>
 			</template>
@@ -1172,16 +1204,16 @@
 					aria-modal="true"
 					aria-label="New folder"
 				>
-					<span class="sheet__title">新建目录</span>
+					<span class="sheet__title" x-text="t('newFolder')"></span>
 					<label class="editor__field">
-						<span class="editor__label">目录名</span>
+						<span class="editor__label" x-text="t('folderName')"></span>
 						<input
 							id="folder-name-input"
 							class="editor__input"
 							type="text"
 							x-model="folder.name"
 							@keydown.enter.prevent="createFolder()"
-							aria-label="new Folder name"
+							aria-label="Folder name"
 							placeholder="new-folder"
 							autocomplete="off"
 							autocapitalize="off"
@@ -1197,14 +1229,14 @@
 							:disabled="folder.busy"
 							aria-label="Cancel"
 						>
-							取消
+							<span x-text="t('cancel')"></span>
 						</button>
 						<button
 							id="folder-create-button"
 							class="btn"
 							@click="createFolder()"
 							:disabled="folder.busy"
-							x-text="folder.busy ? '创建中…' : '创建'"
+							x-text="folder.busy ? t('creating') : t('createFolder')"
 							aria-label="Create folder"
 						></button>
 					</div>
@@ -1226,7 +1258,7 @@
 						type="button"
 						x-show="!sheet?.isDir && !rename.active"
 						@click="enterRename()"
-						title="点击重命名"
+						:title="t('clickToRename')"
 						:aria-label="'Rename ' + (sheet?.name ?? '')"
 					>
 						<span x-text="sheet?.name ?? ''"></span>
@@ -1254,7 +1286,7 @@
 						@click="preview(sheet)"
 						aria-label="Preview"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span>预览</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span x-text="t('preview')"></span>
 					</button>
 					<button
 						id="entry-edit-button"
@@ -1263,7 +1295,7 @@
 						@click="editExisting(sheet)"
 						aria-label="Edit"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span>编辑</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span x-text="t('edit')"></span>
 					</button>
 					<!-- 仅当服务端注入配置时出现（见 index.ts 的 ONLYOFFICE 接线） -->
 					<button
@@ -1273,7 +1305,8 @@
 						@click="openInOnlyOffice(sheet)"
 						aria-label="Open in ONLYOFFICE"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg><span>用 ONLYOFFICE 打开</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg
+						><span x-text="t('openInOnlyOffice')"></span>
 					</button>
 					<button
 						id="entry-compress-button"
@@ -1282,7 +1315,8 @@
 						@click="compressEntry(sheet)"
 						aria-label="Compress to ZIP"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg><span>压缩为 zip</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg
+						><span x-text="t('compressZip')"></span>
 					</button>
 					<a
 						id="entry-download-link"
@@ -1293,7 +1327,7 @@
 						:aria-label="sheet?.isDir ? 'Download as ZIP' : 'Download'"
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>
-						<span x-text="sheet?.isDir ? '压缩下载' : '下载'"></span>
+						<span x-text="sheet?.isDir ? t('downloadZip') : t('download')"></span>
 					</a>
 					<button
 						id="entry-extract-button"
@@ -1302,10 +1336,11 @@
 						@click="extractEntry(sheet)"
 						aria-label="Extract"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-unarchive"></use></svg><span>解压</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-unarchive"></use></svg
+						><span x-text="t('extract')"></span>
 					</button>
 					<button id="entry-copy-link-button" class="sheet__item" @click="copyLink(sheet)" aria-label="Copy link">
-						<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg><span>复制链接</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg><span x-text="t('copyLink')"></span>
 					</button>
 					<button
 						id="entry-delete-button"
@@ -1313,7 +1348,7 @@
 						@click="askDelete(sheet)"
 						aria-label="Delete"
 					>
-						<svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg><span>删除</span>
+						<svg class="icon" aria-hidden="true"><use href="#i-delete"></use></svg><span x-text="t('delete')"></span>
 					</button>
 					<button
 						id="entry-cancel-button"
@@ -1321,7 +1356,7 @@
 						@click="sheet = null"
 						aria-label="Cancel"
 					>
-						取消
+						<span x-text="t('cancel')"></span>
 					</button>
 				</div>
 			</template>
@@ -1334,11 +1369,11 @@
 					aria-modal="true"
 					:aria-label="'Delete ' + confirmTarget.name + '?'"
 				>
-					<span class="sheet__title">删除 “<span x-text="confirmTarget.name"></span>” ？</span>
+					<span class="sheet__title" x-text="t('deleteConfirmTitle', { name: confirmTarget.name })"></span>
 					<p
 						class="state"
 						style="padding: 0 var(--sp-3) var(--sp-4); text-align: left"
-						x-text="confirmTarget.isDir ? '目录及其中的所有文件都会被删除，无法撤销。' : '删除后无法撤销。'"
+						x-text="confirmTarget.isDir ? t('deleteDirWarn') : t('deleteFileWarn')"
 					></p>
 					<div class="sheet__actions">
 						<button
@@ -1348,7 +1383,7 @@
 							:disabled="busy"
 							aria-label="Cancel"
 						>
-							取消
+							<span x-text="t('cancel')"></span>
 						</button>
 						<button
 							id="delete-confirm-button"
@@ -1356,7 +1391,7 @@
 							@click="remove()"
 							:disabled="busy"
 							aria-label="Delete"
-							x-text="busy ? '删除中…' : '删除'"
+							x-text="busy ? t('deleting') : t('delete')"
 						></button>
 					</div>
 				</div>
@@ -1370,15 +1405,17 @@
 					aria-modal="true"
 					aria-label="Upload conflicts"
 				>
-					<span class="sheet__title"><span x-text="uploadConflicts.length"></span> 个同名文件已存在</span>
-					<p class="sheet__note">继续上传会覆盖它们，原有内容无法恢复。</p>
+					<span class="sheet__title">
+						<span x-text="uploadConflicts.length"></span><span x-text="' ' + t('conflictsExist')"></span>
+					</span>
+					<p class="sheet__note" x-text="t('uploadConflictsNote')"></p>
 					<ul class="sheet__list">
 						<template x-for="file in uploadConflicts.slice(0, 5)" :key="file.name">
 							<li x-text="'· ' + file.name"></li>
 						</template>
 						<li
 							x-show="uploadConflicts.length > 5"
-							x-text="uploadConflicts.length > 5 ? '……以及另外 ' + (uploadConflicts.length - 5) + ' 个' : ''"
+							x-text="uploadConflicts.length > 5 ? t('andMore', { count: uploadConflicts.length - 5 }) : ''"
 						></li>
 					</ul>
 					<div class="sheet__actions">
@@ -1388,7 +1425,7 @@
 							@click="uploadConflicts = null"
 							aria-label="Cancel"
 						>
-							取消
+							<span x-text="t('cancel')"></span>
 						</button>
 						<button
 							id="upload-conflict-overwrite-button"
@@ -1396,7 +1433,7 @@
 							@click="confirmOverwriteUpload()"
 							aria-label="Overwrite"
 						>
-							覆盖
+							<span x-text="t('overwrite')"></span>
 						</button>
 					</div>
 				</div>
@@ -1418,7 +1455,7 @@
 							class="icon-btn"
 							x-show="canEdit(viewer.entry)"
 							@click="editFromViewer()"
-							title="编辑"
+							:title="t('edit')"
 							aria-label="Edit"
 						>
 							<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg>
@@ -1427,7 +1464,7 @@
 							id="viewer-copy-link-button"
 							class="icon-btn"
 							@click="copyLink(viewer.entry)"
-							title="复制链接"
+							:title="t('copyLink')"
 							aria-label="Copy link"
 						>
 							<svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg>
@@ -1437,7 +1474,7 @@
 							class="icon-btn"
 							:href="viewer.entry && viewer.entry.href"
 							:download="viewer.entry && viewer.entry.name"
-							title="下载"
+							:title="t('download')"
 							aria-label="Download"
 						>
 							<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>
@@ -1450,7 +1487,7 @@
 				</div>
 				<div class="viewer__body" x-ref="viewerBody">
 					<template x-if="viewer.status === 'loading'">
-						<p class="state">加载中…</p>
+						<p class="state" x-text="t('loading')"></p>
 					</template>
 					<template x-if="viewer.status === 'error'">
 						<p class="state state--error" x-text="viewer.error"></p>
@@ -1459,7 +1496,7 @@
 						<img
 							:src="viewer.href"
 							:alt="viewer.title"
-							@error="viewer.status = 'error'; viewer.error = '图片加载失败'"
+							@error="viewer.status = 'error'; viewer.error = t('imageLoadFailed')"
 						/>
 					</template>
 					<template x-if="viewer.status === 'ready' && viewer.kind === 'video'">
@@ -1468,7 +1505,7 @@
 							controls
 							playsinline
 							preload="metadata"
-							@error="viewer.status = 'error'; viewer.error = '视频无法播放（或浏览器不支持该编码）'"
+							@error="viewer.status = 'error'; viewer.error = t('videoPlayFailed')"
 						></video>
 					</template>
 					<template x-if="viewer.status === 'ready' && viewer.kind === 'audio'">
@@ -1476,7 +1513,7 @@
 							:src="viewer.href"
 							controls
 							preload="metadata"
-							@error="viewer.status = 'error'; viewer.error = '音频无法播放（或浏览器不支持该编码）'"
+							@error="viewer.status = 'error'; viewer.error = t('audioPlayFailed')"
 						></audio>
 					</template>
 					<template x-if="viewer.status === 'ready' && viewer.kind === 'text'">
@@ -1497,17 +1534,21 @@
 				:aria-label="editor.href ? 'Edit ' + editor.name : 'New text file'"
 			>
 				<div class="editor__bar">
-					<span class="editor__title" x-text="editor.href ? editor.name : '新建文本文件'"></span>
-					<span id="editor-dirty-marker" class="editor__dirty" x-show="editor.dirty" aria-label="Unsaved changes">
-						未保存
-					</span>
+					<span class="editor__title" x-text="editor.href ? editor.name : t('newTextFile')"></span>
+					<span
+						id="editor-dirty-marker"
+						class="editor__dirty"
+						x-show="editor.dirty"
+						aria-label="Unsaved changes"
+						x-text="t('unsavedMarker')"
+					></span>
 					<button
 						id="editor-preview-button"
 						class="icon-btn"
 						:class="editor.preview ? 'icon-btn--on' : ''"
 						x-show="canPreviewEditor()"
 						@click="toggleEditorPreview()"
-						:title="editor.preview ? '继续编辑' : '查看效果'"
+						:title="editor.preview ? t('backToEditing') : t('viewEffect')"
 						:aria-label="editor.preview ? 'Back to editing' : 'Preview'"
 					>
 						<svg class="icon" aria-hidden="true">
@@ -1521,7 +1562,7 @@
 						:class="editor.conflict ? 'icon-btn--danger' : 'icon-btn--primary'"
 						@click="saveEditor()"
 						:disabled="editor.busy"
-						title="保存"
+						:title="t('save')"
 						aria-label="Save"
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-save"></use></svg>
@@ -1533,7 +1574,7 @@
 				</div>
 				<div class="editor__body">
 					<label class="editor__field" x-show="!editor.href">
-						<span class="editor__label">文件名</span>
+						<span class="editor__label" x-text="t('fileName')"></span>
 						<input
 							id="editor-name-input"
 							class="editor__input"
@@ -1554,17 +1595,17 @@
 						x-model="editor.text"
 						spellcheck="false"
 						aria-label="File content"
-						placeholder="在这里输入内容…"
+						:placeholder="t('contentPlaceholder')"
 						@input="editor.dirty = true"
 					></textarea>
 					<div class="editor__preview" x-ref="editorPreview" x-show="editor.preview" aria-label="Preview">
 						<div class="md" x-html="editor.html"></div>
 					</div>
 					<p class="editor__error" x-show="editor.error" x-text="editor.error"></p>
-					<p class="editor__warn" x-show="editor.conflict">同名文件已存在，再点一次保存会覆盖它。</p>
+					<p class="editor__warn" x-show="editor.conflict" x-text="t('conflictWarning')"></p>
 					<template x-if="editor.confirmDiscard">
 						<div class="editor__discard">
-							<span>有未保存的内容，确定放弃？</span>
+							<span x-text="t('discardConfirm')"></span>
 							<div class="sheet__actions">
 								<button
 									id="editor-discard-cancel-button"
@@ -1572,7 +1613,7 @@
 									@click="editor.confirmDiscard = false"
 									aria-label="Keep editing"
 								>
-									继续编辑
+									<span x-text="t('keepEditing')"></span>
 								</button>
 								<button
 									id="editor-discard-confirm-button"
@@ -1580,7 +1621,7 @@
 									@click="discardEditor()"
 									aria-label="Discard"
 								>
-									放弃
+									<span x-text="t('discard')"></span>
 								</button>
 							</div>
 						</div>
@@ -1588,9 +1629,14 @@
 				</div>
 			</div>
 
-			<div id="dropzone" class="dropzone" x-show="dragging" x-transition.opacity aria-label="Drop files to upload">
-				松手即可上传到当前目录
-			</div>
+			<div
+				id="dropzone"
+				class="dropzone"
+				x-show="dragging"
+				x-transition.opacity
+				aria-label="Drop files to upload"
+				x-text="t('dropToUpload')"
+			></div>
 			<div
 				id="toast"
 				class="toast"
@@ -1608,7 +1654,7 @@
 					@click="cancelArchive()"
 					aria-label="Cancel"
 				>
-					取消
+					<span x-text="t('cancel')"></span>
 				</button>
 			</div>
 		</div>
@@ -1649,8 +1695,71 @@
 				}
 			}
 
+			// en is injected inline (window.__LOCALES__); other packs load on demand from /_app/locales/<code>.json.
+			const FALLBACK_LOCALE = window.__LOCALES__ || { en: {} };
+			const SUPPORTED_LANGS = window.__LOCALE_CODES__ || ['en'];
+			const LANG_KEY = 'r2dav.lang';
+
+			function resolve_lang() {
+				const fromQuery = new URLSearchParams(location.search).get('lang');
+				if (SUPPORTED_LANGS.includes(fromQuery)) return fromQuery;
+				let saved = null;
+				try {
+					saved = localStorage.getItem(LANG_KEY);
+				} catch {}
+				if (SUPPORTED_LANGS.includes(saved)) return saved;
+				const nav = (navigator.language || 'en').toLowerCase();
+				if (SUPPORTED_LANGS.includes(nav)) return nav;
+				const base = nav.split('-')[0];
+				return SUPPORTED_LANGS.includes(base) ? base : 'en';
+			}
+
 			window.browser = function () {
 				return {
+					lang: resolve_lang(),
+					// 已加载的语言包（含内联 en）；放进组件里才有响应式，切语言后所有 t() 绑定会重算。
+					locales: { ...FALLBACK_LOCALE },
+					async init() {
+						this.load();
+						this.scrollCrumbs();
+						if (this.lang !== 'en') await this.setLang(this.lang, { save: false });
+						document.addEventListener('keydown', (event) => {
+							if (event.key !== 'Escape') return;
+							if (this.confirmTarget) this.confirmTarget = null;
+							else if (this.uploadConflicts) this.uploadConflicts = null;
+							else if (this.sheet) this.closeAllPanels();
+							else if (this.folder.open) this.folder.open = false;
+							else if (this.newMenu) this.newMenu = false;
+							else if (this.editor.open) this.requestCloseEditor();
+							else if (this.viewer.open) this.closeViewer();
+						});
+					},
+					async setLang(lang, options) {
+						if (!SUPPORTED_LANGS.includes(lang)) return;
+						if (!this.locales[lang]) {
+							try {
+								const response = await fetch('/_app/locales/' + lang + '.json');
+								if (response.ok) this.locales[lang] = await response.json();
+							} catch {}
+						}
+						if (this.locales[lang]) this.lang = lang;
+						document.documentElement.lang = lang === 'zh' ? 'zh-CN' : lang;
+						if (!(options && options.save === false)) {
+							try {
+								localStorage.setItem(LANG_KEY, lang);
+							} catch {}
+						}
+						const url = new URL(location.href);
+						url.searchParams.delete('lang');
+						history.replaceState(null, '', url.pathname + url.search + url.hash);
+					},
+					t(key, vars) {
+						let message = this.locales[this.lang] && this.locales[this.lang][key];
+						if (message === undefined) message = FALLBACK_LOCALE.en[key];
+						if (message === undefined) return key;
+						if (vars) for (const name in vars) message = message.split('{' + name + '}').join(vars[name]);
+						return message;
+					},
 					entries: [],
 					truncated: false,
 					loading: true,
@@ -1700,21 +1809,6 @@
 						preview: false,
 						html: '',
 						renderedFrom: '',
-					},
-
-					init() {
-						this.load();
-						this.scrollCrumbs();
-						document.addEventListener('keydown', (event) => {
-							if (event.key !== 'Escape') return;
-							if (this.confirmTarget) this.confirmTarget = null;
-							else if (this.uploadConflicts) this.uploadConflicts = null;
-							else if (this.sheet) this.closeAllPanels();
-							else if (this.folder.open) this.folder.open = false;
-							else if (this.newMenu) this.newMenu = false;
-							else if (this.editor.open) this.requestCloseEditor();
-							else if (this.viewer.open) this.closeViewer();
-						});
 					},
 
 					/** 弹出文件操作面板；kind 区分长按 / 轻点。 */
@@ -1793,7 +1887,7 @@
 							this.entries = data.entries;
 							this.truncated = data.truncated === true;
 						} catch (err) {
-							this.error = '目录加载失败：' + err.message;
+							this.error = this.t('loadFailed', { msg: err.message });
 						} finally {
 							this.loading = false;
 						}
@@ -1801,7 +1895,7 @@
 
 					get crumbs() {
 						const parts = decodeURIComponent(location.pathname).split('/').filter(Boolean);
-						const trail = [{ label: '根目录', href: '/' }];
+						const trail = [{ label: this.t('rootDir'), href: '/' }];
 						let path = '';
 						for (const part of parts) {
 							path += '/' + part;
@@ -1825,7 +1919,7 @@
 					},
 
 					metaFor(entry) {
-						if (entry.isDir) return '目录';
+						if (entry.isDir) return this.t('dirLabel');
 						return this.formatSize(entry.size) + ' · ' + this.formatDate(entry.modified);
 					},
 
@@ -1870,7 +1964,7 @@
 							// 被弹窗拦截时（iOS Safari）退回当前页。
 							if (!window.open(target, '_blank', 'noopener')) location.href = target;
 						} catch (err) {
-							this.notify('ONLYOFFICE 打开失败：' + err.message, 'error');
+							this.notify(this.t('onlyofficeFailed', { msg: err.message }), 'error');
 						}
 					},
 
@@ -1951,7 +2045,7 @@
 							}
 						} catch (err) {
 							this.viewer.status = 'error';
-							this.viewer.error = '预览失败：' + err.message;
+							this.viewer.error = this.t('previewFailed', { msg: err.message });
 						}
 					},
 
@@ -2031,7 +2125,7 @@
 					/** MKCOL 建目录；405 / 409 如实报错。 */
 					async createFolder() {
 						const name = this.folder.name.trim();
-						const invalid = this.check_name(name, '目录名');
+						const invalid = this.check_name(name, this.t('folderName'));
 						if (invalid) {
 							this.folder.error = invalid;
 							return;
@@ -2047,10 +2141,10 @@
 							});
 							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 							this.folder.open = false;
-							this.notify('已创建目录 ' + name, 'done');
+							this.notify(this.t('folderCreated', { name }), 'done');
 							await this.load();
 						} catch (err) {
-							this.folder.error = '创建失败：' + err.message;
+							this.folder.error = this.t('createFailed', { msg: err.message });
 							buzz('error');
 						} finally {
 							this.folder.busy = false;
@@ -2083,7 +2177,7 @@
 							this.cancelRename();
 							return null;
 						}
-						const invalid = this.check_name(name, '文件名');
+						const invalid = this.check_name(name, this.t('fileName'));
 						if (invalid) {
 							// 非法名留在编辑态。
 							this.rename.error = invalid;
@@ -2123,9 +2217,9 @@
 							});
 							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 							this.applyRename(entry, old_href, name, new_href);
-							this.notify('已重命名为 ' + name, 'done');
+							this.notify(this.t('renamed', { name }), 'done');
 						} catch (err) {
-							this.notify('重命名失败：' + err.message, 'error');
+							this.notify(this.t('renameFailed', { msg: err.message }), 'error');
 						} finally {
 							this.rename.pending = null;
 						}
@@ -2162,9 +2256,9 @@
 
 					/** 目录打包下载（实现在 src/archive.client.js）。 */
 					async zipFolder(entry) {
-						await this.runArchive('压缩', async (signal, onProgress) => {
+						await this.runArchive(this.t('archiveCompress'), async (signal, onProgress) => {
 							const result = await window.R2Archive.downloadFolderAsZip(entry, { onProgress, signal });
-							this.notify('已压缩 ' + result.files + ' 个文件', 'done');
+							this.notify(this.t('compressed', { count: result.files }), 'done');
 						});
 					},
 
@@ -2181,9 +2275,9 @@
 					async compressEntry(entry) {
 						await this.settleRename();
 						this.sheet = null;
-						await this.runArchive('压缩', async (signal, onProgress) => {
+						await this.runArchive(this.t('archiveCompress'), async (signal, onProgress) => {
 							const result = await window.R2Archive.storeFolderAsZip(entry, { onProgress, signal });
-							this.notify('已生成 ' + entry.name + '.zip（' + this.formatSize(result.bytes) + '）', 'done');
+							this.notify(this.t('zipCreated', { name: entry.name, size: this.formatSize(result.bytes) }), 'done');
 							await this.load();
 						});
 					},
@@ -2192,9 +2286,9 @@
 					async extractEntry(entry) {
 						await this.settleRename();
 						this.sheet = null;
-						await this.runArchive('解压', async (signal, onProgress) => {
+						await this.runArchive(this.t('archiveExtract'), async (signal, onProgress) => {
 							const result = await window.R2Archive.extractZipToFolder(entry, { onProgress, signal });
-							this.notify('已解压 ' + result.files + ' 个文件到 ' + entry.name.replace(/\.zip$/i, '') + '/', 'done');
+							this.notify(this.t('extracted', { count: result.files, dir: entry.name.replace(/\.zip$/i, '') }), 'done');
 							await this.load();
 						});
 					},
@@ -2210,7 +2304,7 @@
 						} catch (err) {
 							// 取消不算失败，原样转出模块的说明。
 							this.notify(
-								controller.signal.aborted ? err.message : label + '失败：' + err.message,
+								controller.signal.aborted ? err.message : this.t('archiveFailed', { label, msg: err.message }),
 								controller.signal.aborted ? 'tap' : 'error',
 							);
 						} finally {
@@ -2223,8 +2317,8 @@
 					},
 
 					check_name(name, label) {
-						if (!name) return '请填写' + label;
-						if (name.includes('/') || name.includes('\\')) return label + '不能包含斜杠';
+						if (!name) return this.t('nameRequired', { label });
+						if (name.includes('/') || name.includes('\\')) return this.t('nameNoSlash', { label });
 						return '';
 					},
 
@@ -2263,7 +2357,7 @@
 								contentType: entry.contentType,
 							});
 						} catch (err) {
-							this.notify('打开失败：' + err.message, 'error');
+							this.notify(this.t('openFailed', { msg: err.message }), 'error');
 						}
 					},
 
@@ -2313,13 +2407,13 @@
 						} catch (err) {
 							// 出错退回编辑态，否则提示会显示在看不见的地方。
 							this.editor.preview = false;
-							this.editor.error = '预览失败：' + err.message;
+							this.editor.error = this.t('previewFailed', { msg: err.message });
 						}
 					},
 
 					async saveEditor() {
 						const raw = this.editor.name.trim();
-						const invalid = this.check_name(raw, '文件名');
+						const invalid = this.check_name(raw, this.t('fileName'));
 						if (invalid) {
 							this.editor.error = invalid;
 							return;
@@ -2348,10 +2442,10 @@
 							});
 							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 							this.discardEditor();
-							this.notify('已保存 ' + name, 'done');
+							this.notify(this.t('saved', { name }), 'done');
 							await this.load();
 						} catch (err) {
-							this.editor.error = '保存失败：' + err.message;
+							this.editor.error = this.t('saveFailed', { msg: err.message });
 							buzz('error');
 						} finally {
 							this.editor.busy = false;
@@ -2365,7 +2459,7 @@
 						this.sheet = null;
 						try {
 							await navigator.clipboard.writeText(url);
-							this.notify('链接已复制', 'tap');
+							this.notify(this.t('linkCopied'), 'tap');
 						} catch {
 							this.notify(url);
 						}
@@ -2387,10 +2481,10 @@
 							this.confirmTarget = null;
 							// 删的正好是当前预览的文件时，一并关掉预览层。
 							if (this.viewer.entry && this.viewer.entry.href === target.href) this.closeViewer();
-							this.notify('已删除 ' + target.name, 'done');
+							this.notify(this.t('deleted', { name: target.name }), 'done');
 							await this.load();
 						} catch (err) {
-							this.notify('删除失败：' + err.message, 'error');
+							this.notify(this.t('deleteFailed', { msg: err.message }), 'error');
 						} finally {
 							this.busy = false;
 						}
@@ -2417,7 +2511,9 @@
 						const conflicts = [];
 						let done = 0;
 						for (const file of files) {
-							this.notify('上传中 ' + (done + conflicts.length + 1) + '/' + files.length + '：' + file.name);
+							this.notify(
+								this.t('uploading', { current: done + conflicts.length + 1, total: files.length, name: file.name }),
+							);
 							try {
 								const response = await fetch(location.pathname + encodeURIComponent(file.name), {
 									method: 'PUT',
@@ -2433,7 +2529,7 @@
 								done++;
 							} catch (err) {
 								this.busy = false;
-								this.notify('上传失败 ' + file.name + '：' + err.message, 'error');
+								this.notify(this.t('uploadFailed', { name: file.name, msg: err.message }), 'error');
 								await this.load();
 								return;
 							}
@@ -2469,16 +2565,22 @@
 						if (pending.length > 0) {
 							this.uploadConflicts = pending;
 							buzz('tap');
-							if (done > 0) this.notify('已上传 ' + done + ' 个文件', 'done');
+							if (done > 0) this.notify(this.t('uploadDone', { done }), 'done');
 							await this.load();
 							return;
 						}
 
 						// 只留一条提示：toast 只有一个槽位。
 						const parts = [];
-						if (done > 0) parts.push('已上传 ' + done + ' 个文件');
-						if (blocked.length > 0) parts.push('跳过同名目录：' + blocked.map((file) => file.name).join('、'));
-						this.notify(parts.length > 0 ? parts.join('；') : '没有文件被上传', parts.length > 0 ? 'done' : 'error');
+						if (done > 0) parts.push(this.t('uploadDone', { done }));
+						if (blocked.length > 0)
+							parts.push(
+								this.t('uploadSkippedDirs', { list: blocked.map((file) => file.name).join(this.t('listSeparator')) }),
+							);
+						this.notify(
+							parts.length > 0 ? parts.join(this.t('listSeparator')) : this.t('uploadNone'),
+							parts.length > 0 ? 'done' : 'error',
+						);
 						await this.load();
 					},
 
