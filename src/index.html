@@ -868,14 +868,14 @@
 				/*
 				 * 尺寸刻意压着：提示条是浮在内容上的，宽度和高度都直接从可视区里吃掉一块
 				 * （手机上曾经是 90vw × 68px，很显眼）。字号降一级、内边距各收一档。
-				 * 高度主要由取消按钮的 44px 撑起（触控目标不缩），想再薄只能缩按钮。
+				 * 三种形态（普通提示 / 进度 / 进度+取消）必须一样高，否则浮在内容上会跳。定高 = 行高 12×1.5=18px + 上下各 6px = 30px，所以取消按钮必须 ≤18px（见下）；6px 不在 --sp-* 档位上，是刻意凑这个 30。
 				 */
 				gap: var(--sp-2);
-				padding: var(--sp-2) var(--sp-3);
+				padding: 6px var(--sp-3);
 				border-radius: var(--r-md);
 				background: var(--ink);
 				color: #fff;
-				font-size: 13px;
+				font-size: 12px;
 				box-shadow: 0 8px 24px rgba(15, 23, 42, 0.24);
 			}
 
@@ -904,17 +904,31 @@
 				white-space: nowrap;
 			}
 
-			/* 深色底上的次级按钮；触控目标仍按约定做到 ≥ 44px */
+			/*
+			 * 深色底上的次级按钮。
+			 *
+			 * 视觉尺寸收到和一行文字一样高（18px）：44px 的触控目标会把提示条从 30px 撑到 60px，
+			 * 用「三种形态一样高」与紧凑换它不划算；而且「取消」是中止长任务的动作，小一点
+			 * 反而不容易误触。
+			 * 但可点区域不真的只有 18px —— 用 ::after 撑到 30px，并且**不外扩到提示条之外**
+			 * （正好吃掉上下各 6px 的内边距），所以点提示条边缘不会莫名取消。
+			 */
 			.toast__cancel {
+				position: relative;
 				flex: none;
-				min-height: 44px;
-				padding: 0 var(--sp-3);
+				min-height: 18px;
+				padding: 0 var(--sp-2);
 				border: 0;
 				border-radius: var(--r-sm);
 				background: rgba(255, 255, 255, 0.16);
 				color: #fff;
 				font: inherit;
 				cursor: pointer;
+			}
+			.toast__cancel::after {
+				content: '';
+				position: absolute;
+				inset: -6px -4px;
 			}
 
 			.toast__cancel:hover {
