@@ -97,21 +97,14 @@ const EXTENSION_TYPES: Record<string, { documentType: string; contentType: strin
 export type WebdavTransport = (request: Request) => Promise<Response>;
 
 export type OnlyOfficeEnv = {
-	/** WebDAV 服务自身的账号：adapter 以普通客户端身份发子请求时用它鉴权 */
+	/** Credentials of this WebDAV service, used for the adapter's own requests. */
 	USERNAME: string;
 	PASSWORD: string;
-	/**
-	 * 配了它 → 签名模式（发短期短链，跨源可用）；不配 → 直连模式（给原生 WebDAV 地址，
-	 * 要求编辑器与 WebDAV 同源，靠浏览器已缓存的 Basic 凭据）。
-	 * 与其它在线服务（drawio、Photopea…）**共用同一个** secret。
-	 */
+	/** Shared HMAC secret for signed short links. Set => signed mode, unset => direct mode. */
 	SIGNING_SECRET?: string;
-	/** 对外暴露的基址（编辑器与 Worker 不同源、或前面挂了反代时用），例如 https://dav.example.com */
+	/** Public base URL of this service, e.g. https://dav.example.com. Defaults to the request origin. */
 	EMBED_BASE_URL?: string;
-	/**
-	 * 在线编辑器页面地址（office-website 的 `/editor`），例如
-	 * `https://xxxx.pages.dev/editor`。配了它，文件列表的操作面板里才会出现「用 ONLYOFFICE 打开」。
-	 */
+	/** Online editor page, e.g. https://editor.example.com/editor. Adds the "open in ONLYOFFICE" action. */
 	ONLYOFFICE_EDITOR_URL?: string;
 };
 

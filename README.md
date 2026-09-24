@@ -62,7 +62,7 @@
 ```bash
 npm install
 
-# 本地账号密码，wrangler dev 会读这个文件（已在 .gitignore 里）
+# local credentials; wrangler dev reads this file (gitignored)
 printf 'USERNAME=admin\nPASSWORD=admin\n' > .dev.vars
 
 npm run dev   # http://localhost:8787
@@ -87,11 +87,11 @@ npx wrangler r2 bucket create webdav
 ### 2. 改 `wrangler.toml`
 
 ```toml
-name = "r2-webdav" # Worker 名字，决定 workers.dev 域名
+name = "r2-webdav"
 
 [[r2_buckets]]
-binding = "bucket" # 保持这个名字：代码里按 bucket 取绑定
-bucket_name = "webdav" # 换成你自己的桶名
+binding = "bucket"
+bucket_name = "webdav"
 ```
 
 ### 3. 设置账号密码
@@ -135,11 +135,11 @@ npm run deploy # = wrangler deploy
 ```toml
 # wrangler.toml
 [vars]
-ONLYOFFICE_EDITOR_URL = "https://<编辑器域名>/editor"
+ONLYOFFICE_EDITOR_URL = "https://<editor-host>/editor"
 ```
 
 ```bash
-npx wrangler secret put SIGNING_SECRET # 跨源必需
+npx wrangler secret put SIGNING_SECRET # required for cross-origin setups
 ```
 
 编辑器页面用 [office-website](https://github.com/baotlake/office-website)：ONLYOFFICE 与 x2t 转换器都跑在浏览器里，不需要 Document Server。打开时它拿一个短期签名 URL 取文件，保存时把结果 `PUT` 回 `saveUrl` —— 两边都是标准 WebDAV，所以编辑器和 WebDAV 可以在不同域名上。

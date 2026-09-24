@@ -1,14 +1,7 @@
 /**
  * Worker 入口：鉴权、CORS 与请求分发。
  *
- * - WebDAV 协议实现（PROPFIND/PUT/COPY/…）：webdav.ts
- * - 浏览器页面（列表/上传/预览）：ui.ts
- * - R2 访问工具：r2.ts
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Run `npm run deploy` to publish your worker
- *
- * Learn more at https://developers.cloudflare.com/workers/
+ * - WebDAV protocol simple implement（PROPFIND/PUT/COPY/…）：webdav.ts
  */
 
 import { SUPPORT_METHODS, dispatch_handler } from './webdav';
@@ -26,10 +19,9 @@ export interface Env {
 	USERNAME: string;
 	PASSWORD: string;
 
-	// 浏览器在线服务（ONLYOFFICE、drawio、Photopea…）**共用**的签名密钥：配了它就启用
-	// `/embed/*` 这类「无凭据短链」路由；不配则所有服务都退回直连模式（要求同源）。
+	// Shared HMAC secret for signed short links (ONLYOFFICE, drawio, …). Omit to disable.
 	SIGNING_SECRET?: string;
-	// 对外暴露的基址（服务与 Worker 不同源、或前面挂了反代时用），例如 https://dav.example.com
+	// Public base URL of this service, e.g. https://dav.example.com. Defaults to the request origin.
 	EMBED_BASE_URL?: string;
 }
 

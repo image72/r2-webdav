@@ -48,7 +48,7 @@ hostname —— 生产环境下 Worker 自调用会被平台拦掉（实测返�
 
 |                   | 直连（默认，不配 secret） | 签名（配了 `SIGNING_SECRET`）                 |
 | ----------------- | ------------------------- | --------------------------------------------- |
-| `url` / `saveUrl` | 文件自己的 WebDAV 地址    | `/onlyoffice/doc/<短期 HMAC 短链>`            |
+| `url` / `saveUrl` | 文件自己的 WebDAV 地址    | `/onlyoffice/doc/<short-lived HMAC token>`    |
 | 打开 / 保存       | 原生 `GET` / `PUT`        | adapter 校验签名后转发为 WebDAV `GET` / `PUT` |
 | 授权              | 浏览器**已缓存的 Basic**  | 短链自带签名，不需要凭据                      |
 | 前提              | **与 WebDAV 同源**        | 无（跨源可用）                                |
@@ -114,7 +114,7 @@ npx wrangler secret put SIGNING_SECRET
 ```toml
 # wrangler.toml
 [vars]
-ONLYOFFICE_EDITOR_URL = "https://<你的编辑器域名>/editor"
+ONLYOFFICE_EDITOR_URL = "https://<editor-host>/editor"
 ```
 
 - **打不开就不给入口**：地址没配、地址写错、或跨源但没配 `SIGNING_SECRET` 时，服务端干脆
