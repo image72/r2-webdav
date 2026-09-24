@@ -15,7 +15,7 @@ import { SUPPORT_METHODS, dispatch_handler } from './webdav';
 import { handle_asset_request } from './ui';
 // ONLYOFFICE 适配层（可选，整块可下线）。搜 ONLYOFFICE 就能找到全部接线点：
 // 这里的 import、Env 里那两个字段、以及下面鉴权旁路与分发各一处。
-import { ONLYOFFICE_TOKEN_PREFIX, handle_onlyoffice_request } from './onlyoffice';
+import { ONLYOFFICE_TOKEN_PREFIX, handle_onlyoffice_request, onlyoffice_page_config } from './onlyoffice';
 import type { WebdavTransport } from './onlyoffice';
 
 export interface Env {
@@ -40,6 +40,25 @@ function is_authorized(authorization_header: string, username: string, password:
 	const expected = encoder.encode(`Basic ${btoa(`${username}:${password}`)}`);
 
 	return header.byteLength === expected.byteLength && crypto.subtle.timingSafeEqual(header, expected);
+}
+
+/**
+ * 把页面配置塞进 HTML 的 `</head>` 前。
+ *
+ * 用 HTMLRewriter 而不是字符串替换：页面是**流式**下发的（不必先把 HTML 读进内存），也不会
+ * 误伤正文里恰好出现的 `</head>`。ui.ts / webdav.ts 都不需要知道 ONLYOFFICE 存在 ——
+ * 这只是 index.ts 这一层的接线。
+ */
+function inject_page_config(response: Response, config: unknown): Response {
+	// `<` 要转义：配置里万一出现 `</script>` 会提前结束脚本块
+	const json = JSON.stringify(config).replace(/</g, '\\u003c');
+	return new HTMLRewriter()
+		.on('head', {
+			element(element) {
+				element.append(`<script>window.__APP_CONFIG__=${json};</script>`, { html: true });
+			},
+		})
+		.transform(response);
 }
 
 export default {
@@ -77,6 +96,17 @@ export default {
 			(await handle_onlyoffice_request(request, env, webdav_transport)) ??
 			handle_asset_request(request) ??
 			(await dispatch_handler(request, bucket));
+
+		// 文件列表页里的「用 ONLYOFFICE 打开」入口需要知道在线编辑器地址与放行的扩展名，
+		// 由 adapter 给（未配就是 null＝功能关着）。
+		//
+		// 这里用 HTMLRewriter 挂在响应上，而不是让 ui.ts / webdav.ts 去拼 HTML：那两个文件
+		// 不需要知道 ONLYOFFICE 存在（页面是流式下发的，这样也不用把 HTML 读进内存）。
+		// 下线时把这几行连同上面两处接线一起删掉，页面读不到配置，入口自然消失。
+		const page_config = onlyoffice_page_config(env, request);
+		if (page_config !== null && (response.headers.get('Content-Type') ?? '').startsWith('text/html')) {
+			response = inject_page_config(response, { onlyoffice: page_config });
+		}
 
 		// Set CORS headers
 		response.headers.set('Access-Control-Allow-Origin', request.headers.get('Origin') ?? '*');

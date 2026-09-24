@@ -108,7 +108,45 @@ export type OnlyOfficeEnv = {
 	SIGNING_SECRET?: string;
 	/** 对外暴露的基址（编辑器与 Worker 不同源、或前面挂了反代时用），例如 https://dav.example.com */
 	EMBED_BASE_URL?: string;
+	/**
+	 * 在线编辑器页面地址（office-website 的 `/editor`），例如
+	 * `https://xxxx.pages.dev/editor`。配了它，文件列表的操作面板里才会出现「用 ONLYOFFICE 打开」。
+	 */
+	ONLYOFFICE_EDITOR_URL?: string;
 };
+
+/**
+ * 给文件列表页面（index.html）用的配置：在线编辑器地址 + 放行的扩展名清单。
+ *
+ * 返回 null 表示这个功能没开 —— 页面那边读不到配置，入口压根不出现，基础 UI 不受影响。
+ * 扩展名直接取自本模块的 `EXTENSION_TYPES`：清单只有一份，前端不用再维护一遍、早晚对不上。
+ */
+export function onlyoffice_page_config(
+	env: OnlyOfficeEnv,
+	request: Request,
+): { editorUrl: string; extensions: string[] } | null {
+	const editorUrl = env.ONLYOFFICE_EDITOR_URL;
+	if (!editorUrl) {
+		return null;
+	}
+	let editor: URL;
+	try {
+		editor = new URL(editorUrl);
+	} catch {
+		// 地址配错了就当功能没开，别让每次打开页面都 500
+		return null;
+	}
+
+	// 编辑器页面在**别的源**上时（线上基本都如此），它跨源 fetch 既带不了 Basic 凭据、也无法
+	// 自定义头，只能靠签名短链读写 —— 没配 secret 的话这个入口点下去必然失败，那就不给入口。
+	// 同源部署（编辑器页面和 WebDAV 同一个 host）不受此限：直连模式本身就能用。
+	const same_origin = editor.origin === (env.EMBED_BASE_URL ?? new URL(request.url).origin).replace(/\/+$/, '');
+	if (!same_origin && !env.SIGNING_SECRET) {
+		return null;
+	}
+
+	return { editorUrl: editorUrl.replace(/\/+$/, ''), extensions: Object.keys(EXTENSION_TYPES) };
+}
 
 /**
  * 分发 /onlyoffice/* 请求；不是这些路径就返回 null，交回给页面层与 WebDAV。

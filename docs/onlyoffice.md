@@ -106,6 +106,24 @@ npx wrangler secret put SIGNING_SECRET
 可选：`EMBED_BASE_URL` —— 服务与 Worker 不同源、或前面挂了反代时，用它指定
 对外暴露的基址（否则用请求的 origin 拼 URL）。
 
+## 文件列表里的入口
+
+再配一个编辑器页面地址，文件列表的操作面板里就会出现「用 ONLYOFFICE 打开」（只对
+办公文档显示，点了先要一份带签名短链的会话，再打开编辑器页面）：
+
+```toml
+# wrangler.toml
+[vars]
+ONLYOFFICE_EDITOR_URL = "https://<你的编辑器域名>/editor"
+```
+
+- **打不开就不给入口**：地址没配、地址写错、或跨源但没配 `SIGNING_SECRET` 时，服务端干脆
+  不注入配置，页面上那个按钮不会出现（不会给用户一个点了必然失败的按钮）。同源部署例外，
+  那种情况直连模式本身可用。
+- 放行的扩展名由 adapter 给（就是 `EXTENSION_TYPES`），前端不另维护一份。
+- 配置是 `index.ts` 用 `HTMLRewriter` 注入到页面 HTML 的：`ui.ts` / `webdav.ts` 都不知道
+  ONLYOFFICE 存在，下线时把 `index.ts` 里搜 `ONLYOFFICE` 的那几处删掉即可。
+
 ## 自测（不需要浏览器）
 
 ```bash
