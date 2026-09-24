@@ -1961,8 +1961,12 @@
 								fileName: session.title,
 							});
 							const target = this.onlyoffice.editorUrl + '?' + editor_query;
+							// 新页面打开编辑器。注意不能带 noopener：设了它 window.open 按规范返回 null，
+							// 会误判成弹窗被拦、每次都退回当前页跳转。改为打开后再断开 opener。
+							const popup = window.open(target, '_blank');
+							if (popup) popup.opener = null;
 							// 被弹窗拦截时（iOS Safari）退回当前页。
-							if (!window.open(target, '_blank', 'noopener')) location.href = target;
+							else location.href = target;
 						} catch (err) {
 							this.notify(this.t('onlyofficeFailed', { msg: err.message }), 'error');
 						}
