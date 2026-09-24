@@ -13,6 +13,9 @@
 
 import { SUPPORT_METHODS, dispatch_handler } from './webdav';
 import { handle_asset_request } from './ui';
+// ONLYOFFICE 适配层（可选，整块可下线）。搜 ONLYOFFICE 就能找到全部接线点：
+// 这里的 import、Env 里那两个字段、以及下面鉴权旁路与分发各一处。
+import { ONLYOFFICE_TOKEN_PREFIX, handle_onlyoffice_request } from './onlyoffice';
 
 export interface Env {
 	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
@@ -21,6 +24,11 @@ export interface Env {
 	// Variables defined in the "Environment Variables" section of the Wrangler CLI or dashboard
 	USERNAME: string;
 	PASSWORD: string;
+
+	// ONLYOFFICE 适配层：不配 ONLYOFFICE_HMAC_SECRET 时 /onlyoffice/* 一律 501（功能等于关着）。
+	// ONLYOFFICE_BASE_URL 可选，只在编辑器与 Worker 不同源、或前面挂了反代时才需要。
+	ONLYOFFICE_HMAC_SECRET?: string;
+	ONLYOFFICE_BASE_URL?: string;
 }
 
 function is_authorized(authorization_header: string, username: string, password: string): boolean {
@@ -36,8 +44,15 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const { bucket } = env;
 
+		// 只在**签名模式**（配了 ONLYOFFICE_HMAC_SECRET）下才跳过 Basic：那边的调用方是
+		// 浏览器里的 ONLYOFFICE（裸 fetch 取文件、PUT 保存），跨源时它带不了 Basic 凭据，
+		// 由 URL 里的 HMAC token 负责校验。直连模式没有这条路由，绝不能开这个口子
+		// （否则未鉴权的请求会直接落到 WebDAV 的 GET/PUT 上）。
+		const is_onlyoffice_token_request =
+			env.ONLYOFFICE_HMAC_SECRET !== undefined && new URL(request.url).pathname.startsWith(ONLYOFFICE_TOKEN_PREFIX);
 		if (
 			request.method !== 'OPTIONS' &&
+			!is_onlyoffice_token_request &&
 			!is_authorized(request.headers.get('Authorization') ?? '', env.USERNAME, env.PASSWORD)
 		) {
 			return new Response('Unauthorized', {
@@ -48,9 +63,13 @@ export default {
 			});
 		}
 
-		// 页面用的静态资源要先拦：无尾斜杠的 GET 在 WebDAV 语义里是「取一个对象」，
+		// ONLYOFFICE adapter 先拦（它的两个路径也是「代码路由」，R2 里并没有同名对象）；
+		// 其次是页面用的静态资源：无尾斜杠的 GET 在 WebDAV 语义里是「取一个对象」，
 		// 直接进 dispatch_handler 会去 R2 里找同名对象然后 404。
-		let response: Response = handle_asset_request(request) ?? (await dispatch_handler(request, bucket));
+		let response: Response =
+			(await handle_onlyoffice_request(request, env)) ??
+			handle_asset_request(request) ??
+			(await dispatch_handler(request, bucket));
 
 		// Set CORS headers
 		response.headers.set('Access-Control-Allow-Origin', request.headers.get('Origin') ?? '*');
