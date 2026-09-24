@@ -12,7 +12,6 @@
  * 传输层由 index.ts 注入且走进程内调用：不能 `fetch()` 自己的 hostname，生产环境
  * Worker 自调用会被平台拦掉（404 + `error code 1042`），Miniflare 里看不出这个问题。
  *
- * 错误消息一律用简短英语 + 结构化字段。
  * 协议细节、启用方式与自测见 docs/onlyoffice.md。
  */
 
