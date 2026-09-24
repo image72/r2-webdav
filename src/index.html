@@ -54,7 +54,6 @@
 			body.locked {
 				overflow: hidden;
 			}
-			/* 移动端：去掉 300ms 双击缩放延迟与点击高亮 */
 			button,
 			input,
 			a {
@@ -67,8 +66,7 @@
 				outline: 2px solid var(--accent);
 				outline-offset: 2px;
 			}
-			/* 只对「动作」元素禁止选中（长按会触发系统取词）。不要写成 `a` 或整个面板：
-			   markdown 正文里的 <a>、input / textarea / 预览正文、提示条文字都必须保持可选中。 */
+			/* 不要写成 `a` 或整个面板 */
 			button,
 			.crumb,
 			.icon-btn,
@@ -104,7 +102,6 @@
 				min-height: 100dvh;
 			}
 
-			/* 顶栏：面包屑就是标题 */
 			.app-bar {
 				position: sticky;
 				top: 0;
@@ -189,13 +186,7 @@
 				flex-direction: column;
 				gap: var(--sp-2);
 			}
-			/*
-			 * 长按行 = 弹出文件操作面板（等价于行尾的 ⋯）。
-			 * 必须先压掉 iOS 的原生行为，否则长按会弹出系统的「拷贝 / 查询」菜单，跟我们的面板打架：
-			 *   -webkit-touch-callout: none   禁止长按弹系统菜单
-			 *   -webkit-user-select: none     禁止长按选中文字
-			 * 注意**不要**碰 touch-action —— 设成 none 会把列表滚动一起废掉。
-			 */
+			/* 不要给 .row 设 touch-action: none —— 会把列表滚动一起废掉 */
 			.row {
 				display: grid;
 				grid-template-columns: minmax(0, 1fr) var(--tap);
@@ -213,7 +204,6 @@
 			.row:active {
 				background: var(--bg);
 			}
-			/* 长按中的反馈：iOS 没有 navigator.vibrate，这 500ms 只能靠底色变化给反馈。 */
 			.row--pressing {
 				background: var(--bg);
 			}
@@ -229,7 +219,7 @@
 				text-align: left;
 				cursor: pointer;
 			}
-			/* 按类型给出色调，便于一眼区分目录/图片/媒体/文本/不可预览 */
+			/* 各类型的色调 */
 			.row__icon {
 				display: grid;
 				place-items: center;
@@ -448,11 +438,9 @@
 			.sheet__item--danger .icon {
 				color: var(--danger);
 			}
-			/* 相邻可点目标至少留 8px，避免指腹滓到下一项 */
 			.sheet__item + .sheet__item {
 				margin-top: var(--sp-2);
 			}
-			/* 取消（退出类）与上面的操作拉开距离，避免想点取消却点到别的 */
 			.sheet__item.sheet__item--muted {
 				margin-top: var(--sp-3);
 			}
@@ -470,15 +458,13 @@
 				color: var(--danger);
 				font-size: 14px;
 			}
-			/* 新建目录面板：标题自带 --sp-3 内缩，输入框与错误行跟着对齐 */
 			.sheet--new-folder .editor__field {
 				padding: 0 var(--sp-3);
 			}
 			.sheet--new-folder .editor__error {
 				padding: var(--sp-2) var(--sp-3) 0;
 			}
-			/* 标题即改名入口。它和下面的 .sheet__rename-input 必须高度完全一致：
-			   面板底部吸附（left/right/bottom = 0），内容一变高整块面板就往上跳。 */
+			/* 必须与 .sheet__rename-input 同高 */
 			.sheet__title--edit {
 				display: flex;
 				align-items: center;
@@ -495,7 +481,7 @@
 				background: var(--bg);
 			}
 			.sheet__rename-input {
-				height: 48px; /* 与 .sheet__title--edit 一致，否则面板会跳 */
+				height: 48px; /* 同 .sheet__title--edit */
 				width: 100%;
 				padding: 0 var(--sp-3);
 				border: 1px solid var(--line);
@@ -506,7 +492,7 @@
 				font-weight: 600;
 				font-size: 16px; /* ≥16px，避免 iOS 聚焦输入框时自动放大页面 */
 			}
-			/* 聚焦只靠边框变色，不开 outline —— 会和 border 叠成两圈（同 .editor__input:focus）。 */
+			/* 同 .editor__input:focus */
 			.sheet__rename-input:focus {
 				border-color: var(--accent);
 				outline: none;
@@ -527,7 +513,7 @@
 				white-space: nowrap;
 			}
 
-			/* 预览层与编辑器共用的抽屉外壳：移动端全屏、桌面端右侧停靠 */
+			/* 预览与编辑器共用的抽屉外壳 */
 			.panel {
 				position: fixed;
 				inset: 0;
@@ -564,8 +550,6 @@
 				text-overflow: ellipsis;
 				white-space: nowrap;
 			}
-			/* 防误触：关闭固定最右，往左是下载、复制链接（隔一条分隔线），最左是「编辑」（仅文本类文件）；
-			   相邻 44px 目标之间留 8px。 */
 			.viewer__actions {
 				display: flex;
 				align-items: center;
@@ -695,7 +679,7 @@
 				color: var(--accent);
 			}
 
-			/* 编辑器：复用 .panel 外壳；z-index 高于遮罩，编辑时不被压暗 */
+			/* 复用 .panel 外壳 */
 			.editor {
 				z-index: 67;
 			}
@@ -714,7 +698,6 @@
 				text-overflow: ellipsis;
 				white-space: nowrap;
 			}
-			/* 「未保存」标记：查看态渲染的就是未保存的内容，必须有标记。 */
 			.editor__dirty {
 				flex: none;
 				font-size: 12px;
@@ -764,8 +747,7 @@
 				line-height: 1.6;
 			}
 
-			/* 「查看」面板：尺寸必须与 .editor__text 完全一致（共用 flex:1 + min-height:45dvh），
-			   否则切换时高度变化会硬跳。 */
+			/* 尺寸必须与 .editor__text 一致 */
 			.editor__preview {
 				flex: 1;
 				min-height: 45dvh;
@@ -809,8 +791,7 @@
 				pointer-events: none;
 			}
 
-			/* 居中不用 transform：x-transition.opacity 会在动画期间写内联 transform，把
-			   translateX(-50%) 压掉导致横跳。左右都贴 0 + auto 外边距，与内联样式无关。 */
+			/* 居中别用 transform：Alpine 过渡会写内联 transform 把它压掉 */
 			.toast {
 				position: fixed;
 				left: 0;
@@ -820,11 +801,9 @@
 				bottom: calc(88px + env(safe-area-inset-bottom));
 				z-index: 80;
 				max-width: 90vw;
-				/* 提示文字 + （归档进行中才有的）取消按钮 */
 				display: flex;
 				align-items: center;
-				/* 三种形态（普通 / 进度 / 进度+取消）必须一样高：定高 = 行高 18px + 上下各 6px = 30px，
-				   所以取消按钮必须 ≤18px（见下）；6px 不在 --sp-* 档位上，是为了凑这个 30。 */
+				/* 三种形态必须同高：定高 30px，故取消按钮 ≤18px */
 				gap: var(--sp-2);
 				padding: 6px var(--sp-3);
 				border-radius: var(--r-md);
@@ -834,15 +813,11 @@
 				box-shadow: 0 8px 24px rgba(15, 23, 42, 0.24);
 			}
 
-			/* 进度态：文字长度会连续变化，而提示条是居中的、宽度由内容决定 —— 不钉死宽度就会左右乱晃。
-			   320px = 够放一条进度又不占屏。 */
+			/* 进度态：宽度钉死 */
 			.toast--progress {
 				width: min(320px, 90vw);
 			}
-			/*
-			 * 定宽之后文字得自己收着：长文件名会换行，盒子又开始上下跳，还会把「取消」挤走。
-			 * flex: 1 把取消按钮顶到最右，文字从左边排 —— 像终端里的一行状态，读起来最稳。
-			 */
+			/* 长文件名要截断，不能换行把盒子撑高 */
 			.toast--progress .toast__text {
 				flex: 1;
 				min-width: 0;
@@ -851,8 +826,7 @@
 				white-space: nowrap;
 			}
 
-			/* 深色底上的次级按钮：视觉 18px（与提示条定高一致），可点区域用 ::after 撑到 30px，
-			   且不外扩到提示条之外 —— 点提示条边缘不会莫名取消。 */
+			/* 可点区域用 ::after 撑到 30px，且不外扩到提示条之外 */
 			.toast__cancel {
 				position: relative;
 				flex: none;
@@ -881,7 +855,6 @@
 					margin: 0 auto;
 					width: 100%;
 				}
-				/* 顶栏保留整条背景与分隔线，只把内容对齐到 760px 主列 */
 				.app-bar {
 					padding-left: max(var(--sp-3), calc((100% - 760px) / 2));
 					padding-right: max(var(--sp-2), calc((100% - 760px) / 2));
@@ -916,8 +889,7 @@
 		</style>
 	</head>
 	<body>
-		<!-- 图标：Material Design Icons（Apache-2.0，google/material-design-icons），内联为 sprite，
-     避免 emoji 在 Windows/Linux 上字形不一致，也省掉额外请求 -->
+		<!-- 图标：Material Design Icons（Apache-2.0，google/material-design-icons），内联为 sprite -->
 		<svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
 			<symbol id="i-folder" viewBox="0 0 24 24">
 				<path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
@@ -1169,7 +1141,6 @@
 			<template x-if="newMenu">
 				<div id="new-menu-panel" class="sheet sheet--new open" role="dialog" aria-modal="true" aria-label="New">
 					<span class="sheet__title">新建</span>
-					<!-- 顺序：上传文件 / 新建目录 / 新建文本文件 / 取消（目录在文件之前，与列表一致）。 -->
 					<button
 						id="new-upload-button"
 						class="sheet__item"
@@ -1250,13 +1221,7 @@
 					aria-modal="true"
 					:aria-label="'Actions for ' + (sheet?.name ?? '')"
 				>
-					<!--
-				标题就是改名入口，不额外加按钮。
-				目录不开放改名：目录改名是递归重写它底下每一个 key，不在这轮范围内。
-
-				注意：这里每一处 sheet.* 都要带 ?. —— 面板是 x-if 渲染的，Alpine 在把子树
-				拆掉的瞬间 sheet 已经变成 null，而表达式还会被求值一次，直接写 sheet.isDir 会报错。
-			-->
+					<!-- 每处 sheet.* 都要带 ?.：x-if 拆子树时 sheet 已是 null，表达式还会被求值一次 -->
 					<button
 						id="entry-title-button"
 						class="sheet__title sheet__title--edit"
@@ -1302,9 +1267,7 @@
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span>编辑</span>
 					</button>
-					<!-- 常见办公文档交给在线 ONLYOFFICE（跨源，所以必须走签名短链）。
-					     没配 ONLYOFFICE_EDITOR_URL、或跨源但没配 SIGNING_SECRET 时，服务端不会注入配置，
-					     于是 canOpenInOnlyOffice 恒为 false，这个入口不会出现。 -->
+					<!-- 仅当服务端注入配置时出现（见 index.ts 的 ONLYOFFICE 接线） -->
 					<button
 						id="entry-onlyoffice-button"
 						class="sheet__item"
@@ -1314,9 +1277,6 @@
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg><span>用 ONLYOFFICE 打开</span>
 					</button>
-					<!-- 目录的「压缩」是**独立**的一处操作：它在当前目录生成真实的 <目录名>.zip 对象，
-					     与「解压」对称（解压产生对象，压缩也产生）。它和下面的「压缩下载」不是同一件事：
-					     一个把 zip 留在服务器上，一个只交到本地、服务器上什么都不留。 -->
 					<button
 						id="entry-compress-button"
 						class="sheet__item"
@@ -1334,8 +1294,6 @@
 						@click="downloadEntry(sheet, $event)"
 						:aria-label="sheet?.isDir ? 'Download as ZIP' : 'Download'"
 					>
-						<!-- 目录没有"原样下载"这回事：下载它必然等于压缩后交给你，所以文字要说清楚，
-						     否则用户看到「下载」，根本预期不到会拿到一个 zip 文件。 -->
 						<svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg>
 						<span x-text="sheet?.isDir ? '压缩下载' : '下载'"></span>
 					</a>
@@ -1545,7 +1503,6 @@
 					<span id="editor-dirty-marker" class="editor__dirty" x-show="editor.dirty" aria-label="Unsaved changes">
 						未保存
 					</span>
-					<!-- 「查看」不关编辑器；图标跟着按钮动作走（查看态是「回到编辑」，用铅笔）。 -->
 					<button
 						id="editor-preview-button"
 						class="icon-btn"
@@ -1646,8 +1603,6 @@
 				:class="{ 'toast--progress': toastProgress || !!archiveAbort }"
 			>
 				<span class="toast__text" x-text="toast"></span>
-				<!-- 打包 / 解压是多请求、非原子的长任务，必须给一个真的能停下来的出口。
-				     只在归档进行中出现，平时不影响提示条的宽度。 -->
 				<button
 					id="archive-cancel-button"
 					class="toast__cancel"
@@ -1661,16 +1616,15 @@
 		</div>
 
 		<script>
-			// 目录打包 / 解压在 src/archive.client.js（那个文件可以整块删掉，页面其它部分不受影响）。
+			// 归档逻辑在 src/archive.client.js。
 
 			// 与 src/ui.ts 的 MARKDOWN_EXTENSIONS 保持一致。
 			const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'mdown'];
 
-			// 放在组件外：Alpine 会深度代理 $data，带内部状态的渲染器实例被代理容易出问题。
+			// 不要放进 $data：Alpine 会深度代理它。
 			let markdown_renderer = null;
 
-			// 长按判定：500ms 是 iOS 3D Touch / Android 长按的常规量级；
-			// 允许 10px 抖动，免得手指微不足道的移动就把长按取消掉。
+			// 长按判定：500ms，容差 10px。
 			const LONG_PRESS_MS = 500;
 			const LONG_PRESS_MOVE = 10;
 
@@ -1684,12 +1638,8 @@
 			/**
 			 * 触感反馈。
 			 *
-			 * `navigator.vibrate` 只有 Android Chrome 这类才有；**iOS Safari 没有这个 API**
-			 * （所以长按那里必须有视觉替代 —— 不能把反馈全押在震动上），桌面浏览器一般也没有。
-			 * 不支持就静默跳过：这只是增强，任何情况下都不应该影响操作本身。
-			 *
-			 * 时长/节奏用来区分「分量」：轻点最短，按住略重，完成两下，失败两下更重更长。
-			 * 都做一样长的话，用户分不出刚刚是成功了还是出错了。
+			 * iOS Safari 没有 `navigator.vibrate`，所以调用处要有视觉替代；不支持就静默跳过。
+			 * 时长 / 节奏区分轻重（轻点最短、完成两下、失败两下更重），不要全做一样长。
 			 */
 			const HAPTIC = { tap: 8, press: 16, done: [12, 40, 24], error: [28, 60, 28] };
 
@@ -1697,7 +1647,7 @@
 				try {
 					if (typeof navigator.vibrate === 'function') navigator.vibrate(HAPTIC[kind] || HAPTIC.tap);
 				} catch {
-					// 个别 WebView 会直接抛；反馈失败绝不能让主流程跟着一起失败
+					// 个别 WebView 会直接抛，别让反馈失败影响主流程。
 				}
 			}
 
@@ -1708,23 +1658,18 @@
 					loading: true,
 					error: '',
 					busy: false,
-					// 归档操作（打包 / 解压）进行中时持有 AbortController，否则为 null。
-					// 它既用来挡重入，也决定提示条上要不要出现「取消」——不需要额外的布尔标志。
+					// 归档进行中的 AbortController；既挡重入，也决定提示条上是否出现「取消」。
 					archiveAbort: null,
-					// 长按手势的临时状态。pressTimer 非空表示“正在计时”；
-					// pressFired 表示这次长按已经弹过面板，用来吃掉松手时的那个 click。
+					// 长按手势状态：pressTimer 非空＝正在计时；pressFired＝这次长按已弹过面板。
 					pressTimer: null,
 					pressAt: null,
 					pressFired: false,
 					dragging: false,
 					toast: '',
-					// 提示条当前要不要按「进度」显示（定宽，见 CSS 里 .toast--progress 的注释）。
-					// 置位可以在可见时发生（顶多跳一下），**复位只在提示条隐藏时做** —— 收尾那一刻
-					// 要是宽度变了，会看到它先缩回去再消失。
+					// 进度态（定宽，见 .toast--progress）；复位只在提示条隐藏时做。
 					toastProgress: false,
 					sheet: null,
-					// 服务端注入的在线编辑器配置（见 index.ts 里的 HTMLRewriter 注入）。
-					// 没配就是 null，操作面板里那个入口压根不出现 —— 功能对基础 UI 是「无配置即不存在」。
+					// 服务端注入的编辑器配置（见 index.ts）；null = 不显示入口。
 					onlyoffice: (window.__APP_CONFIG__ && window.__APP_CONFIG__.onlyoffice) || null,
 					confirmTarget: null,
 					uploadConflicts: null,
@@ -1753,8 +1698,7 @@
 						busy: false,
 						error: '',
 						confirmDiscard: false,
-						// 是否正在「查看」；html 是已渲染的结果，renderedFrom 是它对应的原文。
-						// 三者都只在打开/关闭编辑器时重置，在编辑 ⇄ 查看之间来回切不丢。
+						// 三者只在打开 / 关闭编辑器时重置，编辑 ⇄ 查看之间来回切不丢。
 						preview: false,
 						html: '',
 						renderedFrom: '',
@@ -1775,33 +1719,20 @@
 						});
 					},
 
-					/**
-					 * 弹出文件操作面板。
-					 *
-					 * kind 用来区分“怎么打开的”：长按识别成功应该比轻点 ⋯ 重一点 —— 那是触屏上
-					 * 唯一能替 3D Touch 给的反馈。注意不能先 buzz('press') 再让这里 buzz('tap')：
-					 * 新的一次 vibrate() 会取消上一次，后调的会把前面的盖掉。
-					 */
+					/** 弹出文件操作面板；kind 区分长按 / 轻点。 */
 					selectEntry(entry, kind) {
 						this.commitRename();
 						this.sheet = entry;
 						buzz(kind || 'tap');
 					},
 
-					/**
-					 * 长按（触屏 / 触控笔）弹出文件操作面板。
-					 *
-					 * 和行尾的 ⋯ 是同一件事，只多一个更顺手的手势。⋯ 必须保留 ——
-					 * 长按既不可发现、也没法用键盘或读屏触发，不能当成唯一入口。
-					 */
+					/** 长按（触屏 / 触控笔）弹出文件操作面板。 */
 					pressDown(entry, event) {
-						// 鼠标不参与：桌面端的等价物是右键，而且按住左键 500ms 弹菜单
-						// 会跟选词、拖拽抢事件
+						// 鼠标不参与：桌面端的等价物是右键。
 						if (event.pointerType === 'mouse') return;
 						this.clearPressTimer();
 						this.pressAt = { name: entry.name, x: event.clientX, y: event.clientY };
-						// 每次按下都重置：pointerdown 一定先于 click，所以把上次长按的标记
-						// 在这里清掉，就不会有“卡住不消失、之后每次点击都被吞”的残留状态
+						// pointerdown 一定先于 click，每次按下都重置，避免残留标记吞掉后续点击。
 						this.pressFired = false;
 						this.pressTimer = setTimeout(() => {
 							this.pressTimer = null;
@@ -1810,11 +1741,7 @@
 						}, LONG_PRESS_MS);
 					},
 
-					/**
-					 * 手指移开就取消长按。
-					 *
-					 * 这条不能省：列表要能滑，不取消的话任何一次稍慢的扇动都会在停下时弹出面板。
-					 */
+					/** 手指移动超过容差就取消长按（列表要能滑）。 */
 					pressMove(event) {
 						if (this.pressTimer === null || !this.pressAt) return;
 						if (
@@ -1837,13 +1764,7 @@
 						}
 					},
 
-					/**
-					 * 吃掉长按之后必然到来的那个 click。
-					 *
-					 * 少了这一步:「按住 → 弹出面板 → 松手」会顺便把文件也打开，面板被后面那次
-					 * click 顶掉 —— 用户看到的是菜单一闪而过。在**捕获阶段**拦，这样行内两个
-					 * 按钮的 @click 都不会收到事件。
-					 */
+					/** 吃掉长按之后必然到来的那个 click，在捕获阶段拦。 */
 					swallowPressClick(event) {
 						if (!this.pressFired) return;
 						this.pressFired = false;
@@ -1851,12 +1772,7 @@
 						event.stopPropagation();
 					},
 
-					/**
-					 * 关闭全部面板。
-					 *
-					 * 不能靠 @blur 提交改名：面板是 x-if 渲染的，元素移出 DOM 时浏览器不补发
-					 * blur/focusout。所以每个关闭 / 切换面板的路径都显式提交一次（值没变则不发请求）。
-					 */
+					/** 每个关闭 / 切换面板的路径都显式提交改名（@blur 靠不住，见下）。 */
 					closeAllPanels() {
 						this.commitRename();
 						this.sheet = null;
@@ -1896,7 +1812,7 @@
 						return trail;
 					},
 
-					/** 路径较深时把面包屑滚到末尾，保证当前目录始终可见。 */
+					/** 把面包屑滚到末尾。 */
 					scrollCrumbs() {
 						this.$nextTick(() => {
 							const el = this.$refs.crumbs;
@@ -1915,13 +1831,13 @@
 						return this.formatSize(entry.size) + ' · ' + this.formatDate(entry.modified);
 					},
 
-					/** 只有文本类文件能在网页里编辑：其它类型没有可靠的文本往返。 */
+					/** 只有文本类文件可在网页里编辑。 */
 					canEdit(entry) {
 						return !!entry && (entry.kind === 'text' || entry.kind === 'markdown');
 					},
 
 					/**
-					 * 常见办公文档可以用在线 ONLYOFFICE 打开。
+					 * 常见办公文档可用在线 ONLYOFFICE 打开。
 					 *
 					 * 扩展名清单由服务端给（adapter 放行的那份），前端不维护第二份。
 					 */
@@ -1933,18 +1849,14 @@
 					},
 
 					/**
-					 * 用在线 ONLYOFFICE 打开这个文件。
-					 *
-					 * 先向服务端要一份「编辑会话」：它给的是**签过名的读写短链** —— 编辑器在别的源上，
-					 * 它的裸 fetch 带不了 Basic 凭据，只能靠短链。拿到短链再拼编辑器页面地址打开。
+					 * 用在线 ONLYOFFICE 打开：先要一份带签名短链的会话，再打开编辑器页面。
 					 */
 					async openInOnlyOffice(entry) {
 						await this.settleRename();
 						this.sheet = null;
 						buzz('tap');
 						try {
-							// entry.href 是编码过的（中文名、空格都在里面），而服务端会用 URLSearchParams
-							// 解一次，所以这里必须先解码再交给它，否则会变成“编码过的名字”去查对象 → 404。
+							// href 已编码，服务端会再解一次，这里必须先 decode。
 							const query = new URLSearchParams({ path: decodeURIComponent(entry.href) });
 							const response = await fetch('/onlyoffice/session?' + query, {
 								credentials: 'include',
@@ -1957,7 +1869,7 @@
 								fileName: session.title,
 							});
 							const target = this.onlyoffice.editorUrl + '?' + editor_query;
-							// 优先新标签页；被弹窗拦截时（iOS Safari 在 await 之后会拦）退回当前页。
+							// 被弹窗拦截时（iOS Safari）退回当前页。
 							if (!window.open(target, '_blank', 'noopener')) location.href = target;
 						} catch (err) {
 							this.notify('ONLYOFFICE 打开失败：' + err.message, 'error');
@@ -1994,7 +1906,7 @@
 						else location.href = entry.href;
 					},
 
-					/** 从预览层进入编辑：先关掉预览，否则保存后预览里还是旧内容。 */
+					/** 从预览层进入编辑（先关预览）。 */
 					async editFromViewer() {
 						const entry = this.viewer.entry;
 						if (!entry) return;
@@ -2003,7 +1915,7 @@
 					},
 
 					async preview(entry) {
-						// 改名可能还在落盘：entry 的 href 会在成功后就地更新，先等它，否则预览会去取旧路径
+						// 先等改名落盘，否则会去取旧路径。
 						await this.settleRename();
 						buzz('tap');
 						this.sheet = null;
@@ -2032,7 +1944,7 @@
 								await this.loadMarkdown();
 								this.viewer.html = markdown_to_html(text);
 								this.viewer.status = 'ready';
-								// 等 Alpine 把 HTML 写进 DOM 之后再画 mermaid 图
+								// 等 HTML 进 DOM 再画 mermaid。
 								await this.$nextTick();
 								await this.renderMermaid(this.$refs.viewerBody);
 							} else {
@@ -2061,8 +1973,7 @@
 						await this.loadScript('https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js');
 					},
 
-					// markdown-it 会把 mermaid 代码块渲染成 <pre><code>，这里换成 mermaid 节点再绘制。
-					// root 是**包含**已渲染 markdown 的那个元素（预览面板 / 编辑器里的「查看」）。
+					// markdown-it 把 mermaid 渲染成 <pre><code>，先换成节点再绘制；root 是包含它的容器。
 					async renderMermaid(root) {
 						if (!window.mermaid || !root) return;
 						root.querySelectorAll('code.language-mermaid').forEach((block) => {
@@ -2096,13 +2007,11 @@
 						return 'untitled.txt';
 					},
 
-					/** 打开「新建」菜单。单独抽一个方法只为了让触感有个落脚点。 */
 					openNewMenu() {
 						buzz('tap');
 						this.newMenu = true;
 					},
 
-					/** 打开新建目录面板：默认名同样从已有条目里挑一个不冲突的。 */
 					openFolder() {
 						buzz('tap');
 						this.newMenu = false;
@@ -2110,8 +2019,7 @@
 						this.folder = { open: true, name: this.default_folder_name(), busy: false, error: '' };
 					},
 
-					/** 新建目录时的默认名：同 default_new_name()（固定名第二次就撞，MKCOL 只会回 405）。
-					 *  用英文是因为目录名会进 URL，中文会编码成一长串 %E6%96%B0…。 */
+					/** 同 default_new_name()；用英文是因为目录名会进 URL。 */
 					default_folder_name() {
 						const taken = new Set(this.entries.map((entry) => entry.name));
 						if (!taken.has('new-folder')) return 'new-folder';
@@ -2122,13 +2030,7 @@
 						return 'new-folder';
 					},
 
-					/**
-					 * MKCOL 建目录。
-					 *
-					 * 目录在 R2 里是一个带 resourcetype 标记的空对象，所以这里必须先建目录再传文件；
-					 * 不做“已存在就静默成功”—— 405/409 都是真实错误，要如实报给用户（
-					 * 409 通常意味着父级已经不是集合了）。
-					 */
+					/** MKCOL 建目录；405 / 409 如实报错。 */
 					async createFolder() {
 						const name = this.folder.name.trim();
 						const invalid = this.check_name(name, '目录名');
@@ -2140,7 +2042,7 @@
 						this.folder.busy = true;
 						this.folder.error = '';
 						try {
-							// 尾部斜杠是集合的规范写法；服务端 make_resource_path 会去掉它再取 key
+							// 尾部斜杠是集合的规范写法。
 							const response = await fetch(location.pathname + encodeURIComponent(name) + '/', {
 								method: 'MKCOL',
 								credentials: 'include',
@@ -2157,11 +2059,7 @@
 						}
 					},
 
-					/**
-					 * 点标题进入改名（只对文件；目录改名是递归重写每个子键，不在这轮范围内）。
-					 *
-					 * 进入时不改值，所以“点一下又关掉”不会误改 —— 值没变就不发请求。
-					 */
+					/** 点标题进入改名（仅文件）。 */
 					enterRename() {
 						if (!this.sheet || this.sheet.isDir) return;
 						this.rename = { active: true, original: this.sheet.name, draft: this.sheet.name, error: '', pending: null };
@@ -2169,7 +2067,7 @@
 							const input = document.getElementById('rename-input');
 							if (!input) return;
 							input.focus();
-							// 只选中主文件名，扩展名留着：改名绝大多数情况下不动后缀
+							// 只选中主文件名，扩展名留着。
 							const dot = this.rename.draft.lastIndexOf('.');
 							input.setSelectionRange(0, dot > 0 ? dot : this.rename.draft.length);
 						});
@@ -2179,14 +2077,7 @@
 						this.rename = { active: false, original: '', draft: '', error: '', pending: null };
 					},
 
-					/**
-					 * 提交改名（= 同目录 MOVE）。
-					 *
-					 * 触发点：Enter / @blur / 任何关闭或切换面板的路径。@blur 只当锦上添花 ——
-					 * 真正靠得住的是 closeAllPanels / selectEntry 这些必经之路上的显式调用。
-					 *
-					 * 返回一个 Promise（没有待提交的改名时返回 null），调用方可以 await 它再读 href。
-					 */
+					/** 提交改名（= 同目录 MOVE）；返回 pending Promise（无待提交时为 null）。 */
 					commitRename() {
 						if (!this.rename.active) return null;
 						const name = this.rename.draft.trim();
@@ -2196,7 +2087,7 @@
 						}
 						const invalid = this.check_name(name, '文件名');
 						if (invalid) {
-							// 非法名不关面板，留在编辑态让用户改
+							// 非法名留在编辑态。
 							this.rename.error = invalid;
 							return null;
 						}
@@ -2205,14 +2096,14 @@
 							this.cancelRename();
 							return null;
 						}
-						// 先退出编辑态，避免同一个改名被重复提交
+						// 先退出编辑态，避免同一个改名被重复提交。
 						this.rename.active = false;
 						this.rename.error = '';
 						this.rename.pending = this.renameEntry(entry, name);
 						return this.rename.pending;
 					},
 
-					/** 等挂起的改名落盘。任何要读 href 的动作都得先过这一关，否则拿到的是旧路径。 */
+					/** 等挂起的改名落盘（读 href 前必须先过这一关）。 */
 					async settleRename() {
 						const pending = this.commitRename();
 						if (pending) await pending;
@@ -2226,10 +2117,9 @@
 								method: 'MOVE',
 								credentials: 'include',
 								headers: {
-									// Destination 必须是绝对 URL，且 host 要和请求完全一致，否则服务端回 502
+									// Destination 必须是绝对 URL，host 要和请求完全一致，否则服务端回 502。
 									Destination: location.origin + new_href,
-									// 必须显式 F！MOVE 缺省是 T，会把同名目标先删掉 ——
-									// 目标恰好是目录时是**递归删光**它底下的所有对象。
+									// 必须显式 F：MOVE 缺省 T 会先删掉同名目标（目标是目录时递归删光）。
 									Overwrite: 'F',
 								},
 							});
@@ -2244,13 +2134,7 @@
 						await this.load();
 					},
 
-					/**
-					 * 改名成功后就地更新各处持有的引用。
-					 *
-					 * 漏掉任何一处都会留下隐性 bug：
-					 *  - sheet / viewer 还指着旧 href → 之后点预览或下载拿到 404
-					 *  - editor 还指着旧 href → 下一次保存会把**旧文件写回来**，一个文件变两个
-					 */
+					/** 改名成功后就地更新 sheet / viewer / editor 持有的引用。 */
 					applyRename(entry, old_href, name, new_href) {
 						entry.name = name;
 						entry.href = new_href; // entry 就是 this.sheet，标题与动作随之更新
@@ -2264,12 +2148,7 @@
 						}
 					},
 
-					/**
-					 * 下载。
-					 *
-					 * 改名还挂在半路时 sheet.href 已经过期，先等它落盘再放行，
-					 * 否则“改完名马上点下载”会拿到 404。没待办时也走这里，只多一次空等。
-					 */
+					/** 下载（目录则打包）。 */
 					async downloadEntry(entry, event) {
 						event.preventDefault();
 						await this.settleRename();
@@ -2283,10 +2162,7 @@
 						link.remove();
 					},
 
-					/**
-					 * 目录打包下载。实现全在 `src/archive.client.js` 里 —— 这里只负责把进度
-					 * 接到提示条上，并把结果报出来。
-					 */
+					/** 目录打包下载（实现在 src/archive.client.js）。 */
 					async zipFolder(entry) {
 						await this.runArchive('压缩', async (signal, onProgress) => {
 							const result = await window.R2Archive.downloadFolderAsZip(entry, { onProgress, signal });
@@ -2294,24 +2170,17 @@
 						});
 					},
 
-					/** 只有 zip 能解压（JSZip 只认这一种格式）。 */
+					/** 只有 zip 能解压。 */
 					canExtract(entry) {
 						return !!entry && !entry.isDir && /\.zip$/i.test(entry.name);
 					},
 
-					/** 「压缩为 zip」只对目录有意义（文件本来就是文件）。 */
 					canCompress(entry) {
 						return !!entry && entry.isDir;
 					},
 
-					/**
-					 * 压缩为 zip：在当前目录生成真实的 `<目录名>.zip` 对象，**不下载**。
-					 *
-					 * 生成之后它就是个普通文件，想下载再点它（或直接用 Finder）。代价是整个 zip 要额
-					 * 外上传一遍，所以“只想拿走一份”应该用「压缩下载」而不是这个。
-					 */
+					/** 在当前目录生成真实的 <目录名>.zip 对象，不下载。 */
 					async compressEntry(entry) {
-						// 改名还挂在半路时 href 已经过期，先等它落盘再放行
 						await this.settleRename();
 						this.sheet = null;
 						await this.runArchive('压缩', async (signal, onProgress) => {
@@ -2321,9 +2190,8 @@
 						});
 					},
 
-					/** 解压到同名目录。实现全在 `src/archive.client.js` 里。 */
+					/** 解压到同名目录（实现在 src/archive.client.js）。 */
 					async extractEntry(entry) {
-						// 改名还挂在半路时 href 已经过期，先等它落盘再放行
 						await this.settleRename();
 						this.sheet = null;
 						await this.runArchive('解压', async (signal, onProgress) => {
@@ -2333,22 +2201,16 @@
 						});
 					},
 
-					/**
-					 * 归档操作的公共外壳：挡重入、把进度接到提示条上、结束时收掉 AbortController。
-					 *
-					 * 压缩（直接下载 / 生成到服务器）和解压都是「多请求、非原子」的长任务，
-					 * 所以三者都提供真能停下来的取消（失败或取消时，模块会把半成品清掉）。
-					 */
+					/** 压缩 / 解压的公共外壳：挡重入、把进度接到提示条、结束收掉 AbortController。 */
 					async runArchive(label, task) {
 						if (this.archiveAbort) return;
 						const controller = new AbortController();
 						this.archiveAbort = controller;
-						// 长任务的起点也给一次轻反馈：后面的几秒都没动静，得先确认“按到了”
 						buzz('tap');
 						try {
 							await task(controller.signal, (text) => this.notifySticky(text));
 						} catch (err) {
-							// 用户主动取消不该被说成「失败」，原样把模块的说明（含清理结果）转出来
+							// 取消不算失败，原样转出模块的说明。
 							this.notify(
 								controller.signal.aborted ? err.message : label + '失败：' + err.message,
 								controller.signal.aborted ? 'tap' : 'error',
@@ -2358,19 +2220,16 @@
 						}
 					},
 
-					/** 取消进行中的归档操作。 */
 					cancelArchive() {
 						if (this.archiveAbort) this.archiveAbort.abort();
 					},
 
-					/** 新名称校验（文件名 / 目录名共用，保证两处规则一致）。 */
 					check_name(name, label) {
 						if (!name) return '请填写' + label;
 						if (name.includes('/') || name.includes('\\')) return label + '不能包含斜杠';
 						return '';
 					},
 
-					/** 打开编辑器：不传参为新建，传入 { href, name, text } 则编辑已有文件。 */
 					openEditor(entry) {
 						buzz('tap');
 						this.newMenu = false;
@@ -2380,7 +2239,7 @@
 							href: entry ? entry.href : '',
 							name: entry ? entry.name : this.default_new_name(),
 							text: entry ? entry.text : '',
-							// 编辑已有文件时沿用原 Content-Type，避免仅仅编辑一下就顺手改了它的元数据
+							// 沿用原 Content-Type，不要顺手改掉元数据。
 							contentType: (entry && entry.contentType) || null,
 							dirty: false,
 							conflict: false,
@@ -2393,7 +2252,6 @@
 						};
 					},
 
-					/** 编辑已有文本文件：先取回内容再进编辑器。 */
 					async editExisting(entry) {
 						await this.settleRename();
 						this.sheet = null;
@@ -2412,7 +2270,7 @@
 					},
 
 					requestCloseEditor() {
-						// 有未保存内容时先确认一次，避免误点关闭丢掉刚写的东西
+						// 有未保存内容先确认一次。
 						if (this.editor.confirmDiscard) return this.discardEditor();
 						if (this.editor.dirty && this.editor.text) this.editor.confirmDiscard = true;
 						else this.discardEditor();
@@ -2422,40 +2280,32 @@
 						this.editor.open = false;
 						this.editor.confirmDiscard = false;
 						this.editor.text = '';
-						// 关闭即丢弃：dirty / conflict 都失去意义，留着只会变成下一轮的隐患
-						// （conflict 是“用户已确认覆盖”类标记，换一个文件就不该还成立）
 						this.editor.dirty = false;
 						this.editor.conflict = false;
-						// 只有真正关掉编辑器才丢掉已渲染的内容：在编辑 ⇄ 查看之间来回切不丢，
-						// 否则每次切回查看都要重新渲染一遍（mermaid 图会闪一下）。
+						// 只有真正关掉编辑器才丢掉已渲染内容（编辑 ⇄ 查看之间不丢）。
 						this.editor.preview = false;
 						this.editor.html = '';
 						this.editor.renderedFrom = '';
 					},
 
-					/** 「查看」只对 markdown 有意义：纯文本/代码在编辑器里看到的就是最终样子。 */
+					/** 「查看」只对 markdown 有意义。 */
 					canPreviewEditor() {
 						const name = this.editor.name || '';
 						const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
 						return MARKDOWN_EXTENSIONS.includes(ext);
 					},
 
-					/**
-					 * 在编辑器里切换「查看」。
-					 *
-					 * 不关编辑器、也不动 editor.text / dirty —— 要支持改一改 → 看一眼 → 再改。
-					 */
 					async toggleEditorPreview() {
 						if (this.editor.preview) {
 							this.editor.preview = false;
 							return;
 						}
-						// 先把面板显示出来再渲染：mermaid 需要节点已经在布局里才能量出尺寸
+						// mermaid 需要节点先进布局。
 						this.editor.preview = true;
 						this.editor.error = '';
 						try {
 							await this.loadMarkdown();
-							// 内容没变就不重渲染：来回切换不该反复重画 mermaid 图
+							// 内容没变不重渲染。
 							if (this.editor.renderedFrom !== this.editor.text) {
 								this.editor.html = markdown_to_html(this.editor.text);
 								this.editor.renderedFrom = this.editor.text;
@@ -2463,7 +2313,7 @@
 							await this.$nextTick();
 							await this.renderMermaid(this.$refs.editorPreview);
 						} catch (err) {
-							// 出错就退回编辑态，否则错误信息会显示在一个看不见的地方
+							// 出错退回编辑态，否则提示会显示在看不见的地方。
 							this.editor.preview = false;
 							this.editor.error = '预览失败：' + err.message;
 						}
@@ -2476,16 +2326,14 @@
 							this.editor.error = invalid;
 							return;
 						}
-						// 没写扩展名时补 .txt，否则存完自己都预览不了
+						// 没写扩展名时补 .txt。
 						const name = raw.includes('.') ? raw : raw + '.txt';
 						const href = this.editor.href || location.pathname + encodeURIComponent(name);
 
 						this.editor.busy = true;
 						this.editor.error = '';
 						try {
-							// 新建时先探一下重名，避免默默覆盖掉已有文件。
-							// conflict 在文件名变化时会被重置（见输入框上的 @input），所以这里的
-							// “再点一次就覆盖”只针对同一个文件名成立 —— 否则改个名字就能绕过检查。
+							// 新建时先探重名；conflict 在文件名变化时被重置（见 @input）。
 							if (!this.editor.href && !this.editor.conflict) {
 								const probe = await fetch(href, { method: 'HEAD', credentials: 'include' });
 								if (probe.ok) {
@@ -2525,7 +2373,6 @@
 						}
 					},
 
-					/** 删除前先落到统一的应用内确认面板（列表和预览层共用）。 */
 					askDelete(entry) {
 						if (!entry) return;
 						buzz('tap');
@@ -2540,7 +2387,7 @@
 							const response = await fetch(target.href, { method: 'DELETE', credentials: 'include' });
 							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
 							this.confirmTarget = null;
-							// 被删掉的正好是当前预览的文件时，一并关掉预览层
+							// 删的正好是当前预览的文件时，一并关掉预览层。
 							if (this.viewer.entry && this.viewer.entry.href === target.href) this.closeViewer();
 							this.notify('已删除 ' + target.name, 'done');
 							await this.load();
@@ -2564,12 +2411,9 @@
 
 					async upload(files, options) {
 						if (files.length === 0) return;
-						// 批量上传会连续换提示（还带文件名，长短差很多）——先进定宽态；
-						// 单个文件只换一次文字，不值得把提示条撑成宽栏。
+						// 批量上传先进定宽态。
 						if (files.length > 1) this.toastProgress = true;
-						// 不传 options 时先按"不允许覆盖"上传：让服务端在重名时回 412，
-						// 而不是静默替掉用户已有的文件。用 If-None-Match 而不是先发 HEAD 探测，
-						// 是因为由服务端原子判定没有竞态窗口（探测与写入之间可能被人抢先建同名文件）。
+						// 默认不允许覆盖：交给服务端用 If-None-Match 原子判定，避免探测与写入之间的竞态。
 						const overwrite = !!(options && options.overwrite);
 						this.busy = true;
 						const conflicts = [];
@@ -2598,11 +2442,9 @@
 						}
 						this.busy = false;
 
-						// 重名的分两类：同名文件交给用户确认，同名目录直接跳过
-						// （目录的标记对象若被文件替掉，目录里的内容会变得不可见）
+						// 同名目录直接跳过（标记对象被文件顶掉后，目录里的内容会不可见）。
 						//
-						// 先用当前列表快速判断；列表可能过期或没加载成功，所以列表里没有的再向服务器确认
-						// 一次 —— 只在出现重名时发生，能杜绝"把目录覆盖成文件"。
+						// 列表可能过期，列表里没有的再向服务器确认一次。
 						const dirNames = new Set(this.entries.filter((entry) => entry.isDir).map((entry) => entry.name));
 						const blocked = [];
 						const pending = [];
@@ -2621,7 +2463,7 @@
 								});
 								isDir = probe.ok && (await probe.text()).includes('<collection />');
 							} catch {
-								// 探测失败就当作文件处理：下面的覆盖仍需用户确认
+								// 探测失败当作文件处理。
 							}
 							(isDir ? blocked : pending).push(file);
 						}
@@ -2634,7 +2476,7 @@
 							return;
 						}
 
-						// 只留一条提示：toast 只有一个槽位，后面的 notify 会盖掉前面那条
+						// 只留一条提示：toast 只有一个槽位。
 						const parts = [];
 						if (done > 0) parts.push('已上传 ' + done + ' 个文件');
 						if (blocked.length > 0) parts.push('跳过同名目录：' + blocked.map((file) => file.name).join('、'));
@@ -2642,22 +2484,15 @@
 						await this.load();
 					},
 
-					/** 用户在覆盖确认里选了"覆盖":重跑一次，这次不带 If-None-Match。 */
 					async confirmOverwriteUpload() {
 						const files = this.uploadConflicts || [];
 						this.uploadConflicts = null;
 						await this.upload(files, { overwrite: true });
 					},
 
-					/**
-					 * 常驻提示：给打包这类长操作推进度用。
-					 *
-					 * 不能直接复用 notify()，它有 2.4s 自动消失的定时器 —— 打包跑到一半提示就没了。
-					 * 这里先把定时器清掉，等操作结束再交给 notify() 收尾。
-					 */
+					/** 常驻提示：给长操作推进度（不用 notify()，它会 2.4s 后自动消失）。 */
 					notifySticky(message) {
 						clearTimeout(this.toastTimer);
-						// 打包 / 解压的进度正是「文字不停换」的那种提示，必须进定宽态
 						this.toastProgress = true;
 						this.toast = message;
 					},
@@ -2668,8 +2503,7 @@
 						clearTimeout(this.toastTimer);
 						this.toastTimer = setTimeout(() => {
 							this.toast = '';
-							// 趁提示条已经隐藏再退出定宽态：可见时改宽度会看到它跳一下。
-							// 收尾那句「已解压 N 个文件」也就跟着保持定宽，不会先缩回去再消失。
+							// 隐藏后再退出定宽态（可见时改宽度会跳）。
 							this.toastProgress = false;
 						}, 2400);
 					},
