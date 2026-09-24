@@ -41,39 +41,39 @@ adapter **不碰 bucket**：读写都构造成标准 HTTP 请求（`HEAD` / `GET
 ```mermaid
 sequenceDiagram
  autonumber
- participant B as 浏览器（已登录，缓存了 Basic）
+ participant B as Browser (logged in, Basic cached)
  participant W as r2-webdav Worker
- participant D as WebDAV 协议层（同进程）
- participant E as 编辑器页面（ONLYOFFICE_EDITOR_URL，跨源）
+ participant D as WebDAV layer (in-process)
+ participant E as Editor page (ONLYOFFICE_EDITOR_URL, cross-origin)
 
  rect rgb(235, 245, 255)
- note over B,W: ① 换会话 —— 唯一需要凭据的环节
- B->>W: GET /onlyoffice/session?path=/oo/a.docx（Basic）
- W->>D: HEAD /oo/a.docx（带服务自身 Basic）
+ note over B,W: 1. Session - the only credentialed step
+ B->>W: GET /onlyoffice/session?path=/oo/a.docx (Basic)
+ W->>D: HEAD /oo/a.docx (service's own Basic)
  D-->>W: 200 + ETag
- note over W: version = ETag（无则 Last-Modified+size）<br/>key = sha256(path+version) 前 40 位
- W->>W: mint read-token（TTL 1h）+ write-token（TTL 24h）<br/>payload: {path, mode, expires, key, title}，HMAC-SHA256 签名
+ note over W: version = ETag (fallback: Last-Modified+size)<br/>key = sha256(path+version), first 40 hex
+ W->>W: mint read-token (TTL 1h) + write-token (TTL 24h)<br/>payload: {path, mode, expires, key, title}, HMAC-SHA256
  W-->>B: {url, saveUrl, key, fileType, documentType, title, etag, mode:"signed"}
  B->>E: window.open(editorUrl?url=…&fileType=…)
  end
 
  rect rgb(235, 255, 240)
- note over E,D: ② 打开 —— 全程无凭据，token 即凭证
- E->>W: GET /onlyoffice/doc/<read-token>（裸 fetch，无 Basic）
- W->>W: verify_token：HMAC 签名 ✓ + mode=read ✓ + 未过期 ✓
- W->>D: GET /oo/a.docx（带服务自身 Basic）
- D-->>W: 文件字节
- W-->>E: 200（no-store, Content-Disposition）
- note over E: x2t.wasm 在浏览器里转换、编辑
+ note over E,D: 2. Open - no credentials, token IS the credential
+ E->>W: GET /onlyoffice/doc/<read-token> (bare fetch, no Basic)
+ W->>W: verify_token: HMAC sig + mode=read + not expired
+ W->>D: GET /oo/a.docx (service's own Basic)
+ D-->>W: file bytes
+ W-->>E: 200 (no-store, Content-Disposition)
+ note over E: x2t.wasm converts and edits in-browser
  end
 
  rect rgb(255, 248, 235)
- note over E,D: ③ 保存 —— PUT 回写
- E->>W: PUT /onlyoffice/doc/<write-token>（body = 文件字节）
- W->>W: verify_token：HMAC ✓ + mode=write ✓ + 未过期 ✓（拒绝空 body）
- W->>D: PUT /oo/a.docx（流式转发 body）
+ note over E,D: 3. Save - PUT back
+ E->>W: PUT /onlyoffice/doc/<write-token> (body = file bytes)
+ W->>W: verify_token: HMAC + mode=write + not expired (empty body rejected)
+ W->>D: PUT /oo/a.docx (body streamed through)
  D-->>W: 201
- W->>D: HEAD（取新 ETag）
+ W->>D: HEAD (fetch new ETag)
  W-->>E: {ok, size, etag, key}
  end
 ```
