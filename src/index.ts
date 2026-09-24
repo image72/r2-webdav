@@ -16,6 +16,7 @@ import { handle_asset_request } from './ui';
 // ONLYOFFICE 适配层（可选，整块可下线）。搜 ONLYOFFICE 就能找到全部接线点：
 // 这里的 import、Env 里那两个字段、以及下面鉴权旁路与分发各一处。
 import { ONLYOFFICE_TOKEN_PREFIX, handle_onlyoffice_request } from './onlyoffice';
+import type { WebdavTransport } from './onlyoffice';
 
 export interface Env {
 	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
@@ -67,8 +68,13 @@ export default {
 		// ONLYOFFICE adapter 先拦（它的两个路径也是「代码路由」，R2 里并没有同名对象）；
 		// 其次是页面用的静态资源：无尾斜杠的 GET 在 WebDAV 语义里是「取一个对象」，
 		// 直接进 dispatch_handler 会去 R2 里找同名对象然后 404。
+		//
+		// adapter 要读写文件时，它自己构造 Request、交给下面这个「WebDAV 协议层」函数 ——
+		// **进程内调用，不是网络请求**。绝不能让它去 fetch 自己的 hostname：生产环境 Worker
+		// 自调用会被平台拦掉（实测 404 + `error code 1042`），而 Miniflare 里看不出这个问题）。
+		const webdav_transport: WebdavTransport = (req) => dispatch_handler(req, bucket);
 		let response: Response =
-			(await handle_onlyoffice_request(request, env)) ??
+			(await handle_onlyoffice_request(request, env, webdav_transport)) ??
 			handle_asset_request(request) ??
 			(await dispatch_handler(request, bucket));
 

@@ -12,12 +12,16 @@
  *   2. 保存：一个能接收编辑结果字节的写入端点。编辑器在浏览器里跑完转换后，由宿主页面
  *      把结果 POST/PUT 回来。
  *
- * 本模块是 WebDAV 服务的**普通客户端**：所有读写在 HTTP 层发起（HEAD / GET / PUT 到文件
- * 自己的 URL，带上服务自身的 Basic 凭据），**绝不碰 bucket**。好处是写入路径与其它客户端
- * 完全一致（父目录补建、影子文件过滤、PUT 前置条件都由 WebDAV 那层负责），也不会绕过
- * WebDAV 的规则去动它背后的数据。类型上 `OnlyOfficeEnv` 里根本没有 bucket —— 想碰也碰不到。
+ * 本模块是 WebDAV 服务的**普通客户端**：所有读写都构造成标准 HTTP 请求（HEAD / GET / PUT 到
+ * 文件自己的 URL，带上服务自身的 Basic 凭据），交给 WebDAV 协议层处理，**绝不碰 bucket**。
+ * 好处是写入路径与其它客户端完全一致（父目录补建、影子文件过滤、PUT 前置条件都由 WebDAV
+ * 那层负责）。类型上 `OnlyOfficeEnv` 里根本没有 bucket —— 想碰也碰不到。
  *
- * 代价：每次操作多 1~2 个子请求（它们计入 Worker 的子请求配额）。
+ * 传输方式由 index.ts 注入（`WebdavTransport`），走**进程内**调用：不能改成 `fetch()` 自己的
+ * hostname —— 生产环境 Worker 自调用会被平台拦掉（实测 404 + `error code 1042`），而
+ * Miniflare 里看不出这个问题。对 adapter 来说它仍只是一个 Request→Response 的 HTTP 端点。
+ *
+ * 代价：每次操作多 1~2 次协议层调用（进程内，不消耗子请求配额）。
  *
  * token 的签发/校验原语在 signing.ts —— 那层是所有浏览器在线服务（drawio、Photopea…）
  * 共用的，不专属于 ONLYOFFICE。
@@ -83,6 +87,15 @@ const EXTENSION_TYPES: Record<string, { documentType: string; contentType: strin
 	pdf: { documentType: 'pdf', contentType: 'application/pdf' },
 };
 
+/**
+ * 把「一个标准 Request」交给本服务的 WebDAV 协议层，拿回 Response。
+ *
+ * 由 index.ts 注入（那里是 `(req) => dispatch_handler(req, bucket)`）：进程内调用，不走网络。
+ * 为何不在这里直接 `fetch()` 自己的 hostname —— 生产环境会被平台拦掉，实测返回 404 +
+ * `error code 1042`（Miniflare 里不复现），详见 index.ts 的接线注释。
+ */
+export type WebdavTransport = (request: Request) => Promise<Response>;
+
 export type OnlyOfficeEnv = {
 	/** WebDAV 服务自身的账号：adapter 以普通客户端身份发子请求时用它鉴权 */
 	USERNAME: string;
@@ -103,7 +116,11 @@ export type OnlyOfficeEnv = {
  * OPTIONS 也返回 null：预检交给 WebDAV 那层的 OPTIONS（它已经带上了整套 CORS 头），
  * 这里再写一遍只会跟 index.ts 里那份重复。
  */
-export async function handle_onlyoffice_request(request: Request, env: OnlyOfficeEnv): Promise<Response | null> {
+export async function handle_onlyoffice_request(
+	request: Request,
+	env: OnlyOfficeEnv,
+	webdav: WebdavTransport,
+): Promise<Response | null> {
 	const url = new URL(request.url);
 	const is_session = url.pathname === ONLYOFFICE_SESSION_PATH;
 	const is_token = url.pathname.startsWith(ONLYOFFICE_TOKEN_PREFIX);
@@ -116,7 +133,7 @@ export async function handle_onlyoffice_request(request: Request, env: OnlyOffic
 
 	if (is_session) {
 		return request.method === 'GET'
-			? await create_session(request, env)
+			? await create_session(request, env, webdav)
 			: json_response({ error: 'Method Not Allowed', allow: 'GET' }, 405);
 	}
 
@@ -128,10 +145,10 @@ export async function handle_onlyoffice_request(request: Request, env: OnlyOffic
 	}
 	const token = url.pathname.slice(ONLYOFFICE_TOKEN_PREFIX.length);
 	if (request.method === 'GET' || request.method === 'HEAD') {
-		return await read_document(request, env, secret, token);
+		return await read_document(request, env, webdav, secret, token);
 	}
 	if (request.method === 'PUT' || request.method === 'POST') {
-		return await write_document(request, env, secret, token);
+		return await write_document(request, env, webdav, secret, token);
 	}
 	return json_response({ error: 'Method Not Allowed', allow: 'GET, HEAD, PUT, POST' }, 405);
 }
@@ -146,7 +163,7 @@ export async function handle_onlyoffice_request(request: Request, env: OnlyOffic
  * 这个端点走 Basic 鉴权（和 WebDAV 同一组账号）—— 直连模式下返回的就是普通 WebDAV 地址，
  * 所以调用方必须是已登录的浏览器上下文。
  */
-async function create_session(request: Request, env: OnlyOfficeEnv): Promise<Response> {
+async function create_session(request: Request, env: OnlyOfficeEnv, webdav: WebdavTransport): Promise<Response> {
 	const url = new URL(request.url);
 	const path = normalize_path(url.searchParams.get('path'));
 	if (path === null) {
@@ -165,7 +182,7 @@ async function create_session(request: Request, env: OnlyOfficeEnv): Promise<Res
 		);
 	}
 
-	const head = await webdav_fetch(env, request, path, { method: 'HEAD' });
+	const head = await webdav_fetch(env, request, path, { method: 'HEAD' }, webdav);
 	if (head.status === 404) {
 		// 打开一个不存在的文件没有意义，而且会让"保存时凭空造出新文件"变得难以解释
 		return json_response({ error: `File not found: /${path}` }, 404);
@@ -232,14 +249,20 @@ async function create_session(request: Request, env: OnlyOfficeEnv): Promise<Res
 // 打开：GET /onlyoffice/doc/<read-token>
 // ---------------------------------------------------------------------------
 
-async function read_document(request: Request, env: OnlyOfficeEnv, secret: string, token: string): Promise<Response> {
+async function read_document(
+	request: Request,
+	env: OnlyOfficeEnv,
+	webdav: WebdavTransport,
+	secret: string,
+	token: string,
+): Promise<Response> {
 	const payload = await verify_token(secret, token, 'read');
 	if (payload === null) {
 		return json_response({ error: 'Invalid or expired read token' }, 403);
 	}
 
 	const method = request.method === 'HEAD' ? 'HEAD' : 'GET';
-	const upstream = await webdav_fetch(env, request, payload.path, { method });
+	const upstream = await webdav_fetch(env, request, payload.path, { method }, webdav);
 	if (upstream.status === 404) {
 		return json_response({ error: `File not found: /${payload.path}` }, 404);
 	}
@@ -267,7 +290,13 @@ async function read_document(request: Request, env: OnlyOfficeEnv, secret: strin
  *   - 不做并发冲突检测（不带 If-Match）—— 单用户场景下最后写入者胜就够了，
  *     真要检测应该是独立的一轮功能，而不是塞进这个薄 adapter。
  */
-async function write_document(request: Request, env: OnlyOfficeEnv, secret: string, token: string): Promise<Response> {
+async function write_document(
+	request: Request,
+	env: OnlyOfficeEnv,
+	webdav: WebdavTransport,
+	secret: string,
+	token: string,
+): Promise<Response> {
 	const payload = await verify_token(secret, token, 'write');
 	if (payload === null) {
 		return json_response({ error: 'Invalid or expired write token' }, 403);
@@ -285,17 +314,23 @@ async function write_document(request: Request, env: OnlyOfficeEnv, secret: stri
 
 	const contentType = EXTENSION_TYPES[extension_of(payload.path)]?.contentType ?? 'application/octet-stream';
 	// 走标准 WebDAV PUT：body 直接流式转发，不落内存，也不自己写存储
-	const upstream = await webdav_fetch(env, request, payload.path, {
-		method: 'PUT',
-		body: request.body,
-		headers: { 'Content-Type': contentType },
-	});
+	const upstream = await webdav_fetch(
+		env,
+		request,
+		payload.path,
+		{
+			method: 'PUT',
+			body: request.body,
+			headers: { 'Content-Type': contentType },
+		},
+		webdav,
+	);
 	if (!upstream.ok) {
 		return json_response({ error: `Upstream error: PUT /${payload.path} returned ${upstream.status}` }, 502);
 	}
 
 	// 再探一次元数据，把新的 etag / key 回给宿主页面（内容变了，key 就该变）
-	const head = await webdav_fetch(env, request, payload.path, { method: 'HEAD' });
+	const head = await webdav_fetch(env, request, payload.path, { method: 'HEAD' }, webdav);
 	const etag = head.headers.get('etag');
 	return json_response({
 		ok: true,
@@ -317,15 +352,21 @@ function webdav_base(env: OnlyOfficeEnv, request: Request): string {
 }
 
 /**
- * 向 WebDAV 服务发一个**普通 HTTP 子请求**（带服务自身的 Basic 凭据）。
+ * 向 WebDAV 服务发一个**标准 HTTP 请求**（带服务自身的 Basic 凭据），由注入的传输层执行。
  *
  * 这是本模块唯一的读写通道：不碰 bucket、不绕过 WebDAV 层 —— 父目录补建、影子文件过滤、
  * PUT 前置条件这些规则因此和其它客户端走的是同一条路径。
  */
-function webdav_fetch(env: OnlyOfficeEnv, request: Request, path: string, init: RequestInit = {}): Promise<Response> {
+function webdav_fetch(
+	env: OnlyOfficeEnv,
+	request: Request,
+	path: string,
+	init: RequestInit,
+	webdav: WebdavTransport,
+): Promise<Response> {
 	const headers = new Headers(init.headers);
 	headers.set('Authorization', `Basic ${btoa(`${env.USERNAME}:${env.PASSWORD}`)}`);
-	return fetch(`${webdav_base(env, request)}/${encode_path(path)}`, { ...init, headers });
+	return webdav(new Request(`${webdav_base(env, request)}/${encode_path(path)}`, { ...init, headers }));
 }
 
 // ---------------------------------------------------------------------------

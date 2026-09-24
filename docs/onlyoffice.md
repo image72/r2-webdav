@@ -31,10 +31,14 @@ office-website（浏览器）                     r2-webdav（Worker）
   │◀── { ok, size, etag, key } ────────────────┤
 ```
 
-adapter **不碰 bucket**：读写都在 HTTP 层发生（`HEAD` / `GET` / `PUT` 到文件自己的 URL，
-带上服务自身的 Basic 凭据），等价于“一个有权限的 WebDAV 客户端”。所以写入路径与其它
-客户端完全一致（父目录补建、影子文件过滤、PUT 前置条件都由 WebDAV 那层负责），也不会
-绕过 WebDAV 的规则去动它背后的数据。
+adapter **不碰 bucket**：读写都构造成标准 HTTP 请求（`HEAD` / `GET` / `PUT` 到文件自己的 URL，
+带上服务自身的 Basic 凭据），交给 WebDAV 协议层处理，等价于“一个有权限的 WebDAV 客户端”。
+所以写入路径与其它客户端完全一致（父目录补建、影子文件过滤、PUT 前置条件都由 WebDAV 那层
+负责），也不会绕过 WebDAV 的规则去动它背后的数据。
+
+这些请求由 `index.ts` 注入的 WebDAV 协议层函数在**进程内**执行，**不是** `fetch()` 自己的
+hostname —— 生产环境下 Worker 自调用会被平台拦掉（实测返回 `404` + `error code 1042`），
+而 `wrangler dev`（Miniflare）里完全看不出这个问题，只会在线上表现为「文件不存在」。
 
 ## 两种模式（靠 secret 自动切换，客户端接口一模一样）
 
@@ -42,12 +46,12 @@ adapter **不碰 bucket**：读写都在 HTTP 层发生（`HEAD` / `GET` / `PUT`
 两个 URL 直接就是文件自己的 WebDAV 地址（打开 = 原生 GET、保存 = 原生 PUT）——
 同源请求浏览器的 `fetch()` 会自动补上已缓存的 Basic 凭据。
 
-|                   | 直连（默认，不配 secret） | 签名（配了 `SIGNING_SECRET`）         |
-| ----------------- | ------------------------- | ------------------------------------- |
-| `url` / `saveUrl` | 文件自己的 WebDAV 地址    | `/onlyoffice/doc/<短期 HMAC 短链>`    |
+|                   | 直连（默认，不配 secret） | 签名（配了 `SIGNING_SECRET`）                 |
+| ----------------- | ------------------------- | --------------------------------------------- |
+| `url` / `saveUrl` | 文件自己的 WebDAV 地址    | `/onlyoffice/doc/<短期 HMAC 短链>`            |
 | 打开 / 保存       | 原生 `GET` / `PUT`        | adapter 校验签名后转发为 WebDAV `GET` / `PUT` |
-| 授权              | 浏览器**已缓存的 Basic**  | 短链自带签名，不需要凭据              |
-| 前提              | **与 WebDAV 同源**        | 无（跨源可用）                        |
+| 授权              | 浏览器**已缓存的 Basic**  | 短链自带签名，不需要凭据                      |
+| 前提              | **与 WebDAV 同源**        | 无（跨源可用）                                |
 
 判断标准很硬，别凭直觉：`localhost:3000` 与 `127.0.0.1:8790`、`*.pages.dev` 与
 `*.workers.dev` 都算**跨源**。跨源时裸 `fetch()` 不会带凭据，而我们的 CORS 是
