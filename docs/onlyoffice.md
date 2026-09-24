@@ -36,6 +36,60 @@ adapter **不碰 bucket**：读写都构造成标准 HTTP 请求（`HEAD` / `GET
 所以写入路径与其它客户端完全一致（父目录补建、影子文件过滤、PUT 前置条件都由 WebDAV 那层
 负责），也不会绕过 WebDAV 的规则去动它背后的数据。
 
+### 授权与读写全流程（签名模式）
+
+```mermaid
+sequenceDiagram
+ autonumber
+ participant B as 浏览器（已登录，缓存了 Basic）
+ participant W as r2-webdav Worker
+ participant D as WebDAV 协议层（同进程）
+ participant E as 编辑器页面（ONLYOFFICE_EDITOR_URL，跨源）
+
+ rect rgb(235, 245, 255)
+ note over B,W: ① 换会话 —— 唯一需要凭据的环节
+ B->>W: GET /onlyoffice/session?path=/oo/a.docx（Basic）
+ W->>D: HEAD /oo/a.docx（带服务自身 Basic）
+ D-->>W: 200 + ETag
+ note over W: version = ETag（无则 Last-Modified+size）<br/>key = sha256(path+version) 前 40 位
+ W->>W: mint read-token（TTL 1h）+ write-token（TTL 24h）<br/>payload: {path, mode, expires, key, title}，HMAC-SHA256 签名
+ W-->>B: {url, saveUrl, key, fileType, documentType, title, etag, mode:"signed"}
+ B->>E: window.open(editorUrl?url=…&fileType=…)
+ end
+
+ rect rgb(235, 255, 240)
+ note over E,D: ② 打开 —— 全程无凭据，token 即凭证
+ E->>W: GET /onlyoffice/doc/<read-token>（裸 fetch，无 Basic）
+ W->>W: verify_token：HMAC 签名 ✓ + mode=read ✓ + 未过期 ✓
+ W->>D: GET /oo/a.docx（带服务自身 Basic）
+ D-->>W: 文件字节
+ W-->>E: 200（no-store, Content-Disposition）
+ note over E: x2t.wasm 在浏览器里转换、编辑
+ end
+
+ rect rgb(255, 248, 235)
+ note over E,D: ③ 保存 —— PUT 回写
+ E->>W: PUT /onlyoffice/doc/<write-token>（body = 文件字节）
+ W->>W: verify_token：HMAC ✓ + mode=write ✓ + 未过期 ✓（拒绝空 body）
+ W->>D: PUT /oo/a.docx（流式转发 body）
+ D-->>W: 201
+ W->>D: HEAD（取新 ETag）
+ W-->>E: {ok, size, etag, key}
+ end
+```
+
+### token 校验边界（明确不验证的东西）
+
+`/onlyoffice/doc/<tok>` **只**校验三件事：HMAC 签名、`mode` 与路径匹配、`expires` 未过。
+任何持 token 的一方（不论来自编辑器页面、`curl` 还是别的源）都能完成对应操作 —— token
+本身就是这个端点的唯一凭据，与 `ONLYOFFICE_EDITOR_URL` 无绑定。
+
+- 不校验 `Origin` / `Referer`：ONLYOFFICE 取文件是**服务端行为**，请求常不带这些头，
+  校验了也拦不住不带头的 `curl`，只会误伤。
+- `ONLYOFFICE_EDITOR_URL` 只在 `/onlyoffice/session`（Basic 环节）用来判断同源/直连，
+  不参与 token 校验。
+- 防泄漏靠时效（read 1h / write 24h）+ `Cache-Control: no-store` + 不把完整 token 打进日志。
+
 这些请求由 `index.ts` 注入的 WebDAV 协议层函数在**进程内**执行，**不是** `fetch()` 自己的
 hostname —— 生产环境下 Worker 自调用会被平台拦掉（实测返回 `404` + `error code 1042`），
 而 `wrangler dev`（Miniflare）里完全看不出这个问题，只会在线上表现为「文件不存在」。
