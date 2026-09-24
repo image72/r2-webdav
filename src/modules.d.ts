@@ -10,5 +10,8 @@ declare module '*.html' {
 	export default content;
 }
 
-// 客户端脚本 src/archive.client.js 的声明放在 src/archive.client.d.ts ——
-// 那条不能用环境声明写，原因见那个文件里的说明。
+/** Locale packs are inlined into the page as JSON strings (kept out of R2 data space). */
+declare module '*.json' {
+	const content: unknown;
+	export default content;
+}

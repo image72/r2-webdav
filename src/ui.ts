@@ -8,6 +8,10 @@
 import { decode_path, encode_path, is_os_metadata_key, listDir } from './r2';
 import PAGE_HTML from './index.html';
 import ARCHIVE_JS from './archive.client.js';
+// Default pack is inlined into the page (no extra request, no flash); the rest are
+// served on demand from LOCALE_ASSET_PATH.
+import en from './locales/en.json';
+import zh from './locales/zh.json';
 
 export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
 
@@ -19,6 +23,11 @@ export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
  */
 export const ARCHIVE_ASSET_PATH = '/_app/archive.client.js';
 
+/** On-demand locale packs, e.g. /_app/locales/zh.json. en is inlined in the page instead. */
+const LOCALES: Record<string, unknown> = { en, zh };
+const LOCALE_ASSET_PREFIX = '/_app/locales/';
+const LANG_CODES = ['en', 'zh'];
+
 /**
  * 分发客户端静态资源；不是资源请求就返回 null，交给 WebDAV 那层。
  *
@@ -28,16 +37,31 @@ export const ARCHIVE_ASSET_PATH = '/_app/archive.client.js';
  */
 export function handle_asset_request(request: Request): Response | null {
 	if (request.method !== 'GET' && request.method !== 'HEAD') return null;
-	if (new URL(request.url).pathname !== ARCHIVE_ASSET_PATH) return null;
-	return new Response(request.method === 'HEAD' ? null : ARCHIVE_JS, {
-		status: 200,
-		headers: {
-			'Content-Type': 'text/javascript; charset=utf-8',
-			// no-cache 而不是长缓存：改了文件刷新就生效，不用去记版本号。
-			// 将来真要长缓存，把版本写进 URL 比写在这里稳。
-			'Cache-Control': 'no-cache',
-		},
-	});
+	const pathname = new URL(request.url).pathname;
+	if (pathname === ARCHIVE_ASSET_PATH) {
+		return new Response(request.method === 'HEAD' ? null : ARCHIVE_JS, {
+			status: 200,
+			headers: {
+				'Content-Type': 'text/javascript; charset=utf-8',
+				// no-cache 而不是长缓存：改了文件刷新就生效，不用去记版本号。
+				// 将来真要长缓存，把版本写进 URL 比写在这里稳。
+				'Cache-Control': 'no-cache',
+			},
+		});
+	}
+	if (pathname.startsWith(LOCALE_ASSET_PREFIX)) {
+		const code = pathname.slice(LOCALE_ASSET_PREFIX.length).replace(/\.json$/, '');
+		const pack = LOCALES[code];
+		if (pack === undefined) return null;
+		return new Response(request.method === 'HEAD' ? null : JSON.stringify(pack), {
+			status: 200,
+			headers: {
+				'Content-Type': 'application/json; charset=utf-8',
+				'Cache-Control': 'no-cache',
+			},
+		});
+	}
+	return null;
 }
 
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdown']);
@@ -207,8 +231,15 @@ export async function handle_browse_request(request: Request, bucket: R2Bucket):
 		);
 	}
 
-	return new Response(PAGE_HTML, {
-		status: 200,
-		headers: { 'Content-Type': 'text/html; charset=utf-8' },
-	});
+	return new Response(
+		PAGE_HTML.replace(
+			'/*__LOCALES__*/',
+			`window.__LOCALES__ = { en: ${JSON.stringify(en).replace(/</g, '\\u003c')} };` +
+				`window.__LOCALE_CODES__ = ${JSON.stringify(LANG_CODES)};`,
+		),
+		{
+			status: 200,
+			headers: { 'Content-Type': 'text/html; charset=utf-8' },
+		},
+	);
 }

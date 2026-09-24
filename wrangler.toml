@@ -36,3 +36,5 @@ bucket_name = "webdav"
 
 # Optional. Online editor page for the "open in ONLYOFFICE" action; needs SIGNING_SECRET.
 # ONLYOFFICE_EDITOR_URL = "https://<editor-host>/editor"
+# SIGNING_SECRET = "<oo-joint-test-secret>"
+# ONLYOFFICE_EDITOR_URL = "https://YOUR-ZIYIYI-OFFICE.pages.dev/editor"
