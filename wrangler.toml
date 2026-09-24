@@ -25,8 +25,6 @@ type = "Text"
 globs = ["**/archive.client.js"]
 fallthrough = true
 
-# Bind an R2 Bucket. Use R2 to store arbitrarily large blobs of data, such as files.
-# Docs: https://developers.cloudflare.com/r2/api/workers/workers-api-usage/
 [[r2_buckets]]
 binding = "bucket" # <~ valid JavaScript variable name
 bucket_name = "webdav"
@@ -36,7 +34,5 @@ bucket_name = "webdav"
 # USERNAME = "set via Cloudflare Secrets"
 # PASSWORD = "set via Cloudflare Secrets"
 
-# Docs: https://developers.cloudflare.com/workers/observability/logs/workers-logs/#enable-workers-logs
-[observability]
-enabled = true
-head_sampling_rate = 1
+# Optional. Online editor page for the "open in ONLYOFFICE" action; needs SIGNING_SECRET.
+# ONLYOFFICE_EDITOR_URL = "https://<editor-host>/editor"

@@ -62,7 +62,7 @@
 ```bash
 npm install
 
-# 本地账号密码，wrangler dev 会读这个文件（已在 .gitignore 里）
+# local credentials; wrangler dev reads this file (gitignored)
 printf 'USERNAME=admin\nPASSWORD=admin\n' > .dev.vars
 
 npm run dev   # http://localhost:8787
@@ -87,11 +87,11 @@ npx wrangler r2 bucket create webdav
 ### 2. 改 `wrangler.toml`
 
 ```toml
-name = "r2-webdav" # Worker 名字，决定 workers.dev 域名
+name = "r2-webdav"
 
 [[r2_buckets]]
-binding = "bucket" # 保持这个名字：代码里按 bucket 取绑定
-bucket_name = "webdav" # 换成你自己的桶名
+binding = "bucket"
+bucket_name = "webdav"
 ```
 
 ### 3. 设置账号密码
@@ -128,6 +128,24 @@ npm run deploy # = wrangler deploy
 - 打包 / 解压上限 80 MB，只改 `src/archive.client.js` 里的 `ZIP_BYTE_LIMIT` 一处即可。
 - 浏览器端依赖 CDN：Alpine.js、JSZip、markdown-it、mermaid 全部从 jsdelivr 拉取；内网或离线部署需要把这些依赖一并自托管。
 
+## 可选：在线编辑办公文档
+
+装一个在线编辑器，操作面板里就会出现「用 ONLYOFFICE 打开」，直接改、直接存回：
+
+```toml
+# wrangler.toml
+[vars]
+ONLYOFFICE_EDITOR_URL = "https://<editor-host>/editor"
+```
+
+```bash
+npx wrangler secret put SIGNING_SECRET # required for cross-origin setups
+```
+
+编辑器页面用 [office-website](https://github.com/baotlake/office-website)：ONLYOFFICE 与 x2t 转换器都跑在浏览器里，不需要 Document Server。打开时它拿一个短期签名 URL 取文件，保存时把结果 `PUT` 回 `saveUrl` —— 两边都是标准 WebDAV，所以编辑器和 WebDAV 可以在不同域名上。
+
+两个变量都不配，这个功能就完全不存在。细节与自测见 [docs/onlyoffice.md](docs/onlyoffice.md)。
+
 <details>
 <summary><h2>项目结构：每个文件负责什么</h2></summary>
 
@@ -139,7 +157,10 @@ src/index.html           整个浏览器界面（HTML + CSS + 内联 Alpine 组�
 src/archive.client.js    浏览器端 zip 打包 / 解压（独立模块，可整个删掉，页面不受影响）
 src/archive.client.d.ts  上面那个文件的类型声明（作为 Text 模块导入需要）
 src/r2.ts                R2 访问工具：路径编解码、列表、并发控制、OS 元数据过滤
+src/onlyoffice.ts        可选：ONLYOFFICE 打开 / 保存 adapter（可整块删掉，其余代码不受影响）
+src/signing.ts           短链签名原语（多个在线服务共用一把 SIGNING_SECRET）
 docs/webdav-fix-list.md  协议层的缺陷清单与修复记录
+docs/onlyoffice.md       上面那个 adapter 的协议说明、启用方式与自测
 docs/screenshots/        README 用的截图
 ```
 

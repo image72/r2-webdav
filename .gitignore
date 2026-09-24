@@ -3,3 +3,5 @@ node_modules/
 .wrangler/
 dist/
 *.log
+# Local-only configs and dev tools
+wrangler.*.toml

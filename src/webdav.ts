@@ -1,14 +1,9 @@
 /**
- * R2 WebDAV Worker：WebDAV 协议实现（PROPFIND/PUT/COPY/…）。
+ * WebDAV 协议实现（PROPFIND / PUT / COPY / …）。
  *
- * - 浏览器页面（列表/上传/预览）：ui.ts
+ * - 浏览器页面（列表 / 上传 / 预览）：ui.ts
  * - R2 访问工具：r2.ts
  * - Worker 入口、鉴权与路由：index.ts
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Run `npm run deploy` to publish your worker
- *
- * Learn more at https://developers.cloudflare.com/workers/
  */
 
 import {
@@ -57,11 +52,8 @@ function fromR2Object(object: R2Object | null | undefined): DavProperties {
 
 	return {
 		creationdate: object.uploaded.toUTCString(),
-		// 这些值会直接拼进 XML，必须转义：元数据里的 & 与 < 会让整个 multistatus
-		// 变成非法 XML，所有客户端都解析不了。
-		// displayname 是"给人看的资源名"（RFC 4918 §15.2），就应该是文件名本身。
-		// 旧实现把 Content-Disposition 整体塞进来，客户端看到的是
-		// `attachment; filename="x.txt"` 这种字符串。
+		// 这些值会直接拼进 XML，必须转义。
+		// displayname 是给人看的资源名（RFC 4918 §15.2），用文件名本身。
 		displayname: escape_xml(object.key.slice(object.key.lastIndexOf('/') + 1)),
 		getcontentlanguage: object.httpMetadata?.contentLanguage
 			? escape_xml(object.httpMetadata.contentLanguage)
@@ -108,11 +100,10 @@ async function put_collection_marker(bucket: R2Bucket, path: string): Promise<vo
 }
 
 /**
- * 判断路径是否存在，并给出它是否是集合。不存在时返回 null。
+ * 判断路径是否存在，并给出它是否是集合；不存在时返回 null。
  *
- * 没有标记对象时会再用一次 list 探测是否有以它为前缀的对象：否则"隐式目录"
- * （由其它工具直接写入深层 key 造成）会被当成不存在 —— PROPFIND 回 404、
- * DELETE 回 404，而它的子对象其实一直存在。
+ * 没有标记对象时再用 list 探测是否有以它为前缀的对象：否则"隐式目录"
+ * （由其它工具直接写入深层 key 造成）会被当成不存在。
  */
 async function resource_exists(
 	bucket: R2Bucket,
@@ -133,11 +124,8 @@ async function resource_exists(
 }
 
 /**
- * 成员数超出一单次可安全处理的规模时拒绝，而不是只处理一部分。
- *
- * 旧实现会静默地把 COPY/MOVE 截断在 3000 个成员，却照常回 201：客户端以为整体
- * 成功，实际少了数据（MOVE 还会把剩下的留在源端变成不可见的孤儿）。507 是
- * WebDAV 里表示"服务器存量不足/无法完成"的标准状态码。
+ * 成员数超出可安全处理的规模时拒绝，而不是只处理一部分。
+ * 507 = 服务器无法完成的标准状态码。
  */
 function too_many_members(path: string): Response {
 	return new Response(
@@ -149,8 +137,7 @@ function too_many_members(path: string): Response {
 
 /**
  * COPY/MOVE 的 Destination 解析。
- * 非法值 → 400；指向其它主机的 URL → 502（RFC 4918 §9.8.5：不支持跨服务器操作时如此响应），
- * 旧实现只取 pathname，会把外部主机的目标静默写进本桶。
+ * 非法值 → 400；指向其它主机的 URL → 502（RFC 4918 §9.8.5）。
  */
 function resolve_destination(request: Request, header: string | null): string | Response {
 	if (header === null) {
@@ -183,12 +170,11 @@ function etag_matches(header_value: string, etag: string, exists: boolean): bool
 type ConditionalResult = 'proceed' | 'not-modified' | 'precondition-failed';
 
 /**
- * RFC 9110 §13.2.2 的条件请求求值（按优先级：If-Match → If-Unmodified-Since →
+ * RFC 9110 §13.2.2 的条件请求求值（优先级：If-Match → If-Unmodified-Since →
  * If-None-Match → If-Modified-Since）。
  *
- * 自己算而不用 R2 的 onlyIf，有两个原因：R2 在条件不满足时只返回一个没有 body 的
- * 对象，无法区分 304 与 412；而 RFC 要求 GET/HEAD 的 If-None-Match / If-Modified-Since
- * 不满足时必须回 304 —— 旧实现在所有情况下都回 412，缓存校验类客户端因此永远拿不到 304。
+ * 不用 R2 的 onlyIf：它在条件不满足时只返回无 body 的对象，区分不出 304 与 412；
+ * 而 GET/HEAD 的 If-None-Match / If-Modified-Since 不满足时必须回 304。
  */
 function evaluate_conditionals(request: Request, object: R2Object): ConditionalResult {
 	const headers = request.headers;
@@ -233,14 +219,8 @@ async function handle_head(request: Request, bucket: R2Bucket): Promise<Response
 }
 
 /**
- * 集合地址缺少尾斜杠时回 301，把客户端引到规范形式。
- *
- * RFC 4918 §5.1：集合用带尾斜杠的 URL 是规范形式；服务器可以把不带斜杠的请求当作带了，
- * 并应该用 Content-Location 指出规范 URL；同时明确说“客户端需要准备好看到重定向”。
- * 旧实现直接返回目录标记那个 0 字节对象，于是 GET /dir 得到 200 + 空体，客户端会以为
- * 那是个空文件（下载为空、编辑器打开空白），而不是目录。
- *
- * 查询串必须原样保留：`?format=json` 这类请求在重定向后还得是同一个语义。
+ * 集合地址缺少尾斜杠时回 301（RFC 4918 §5.1）。
+ * 查询串必须原样保留：`?format=json` 重定向后还得是同一个语义。
  */
 function redirect_to_collection(request: Request): Response {
 	const url = new URL(request.url);
@@ -258,9 +238,7 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 		return await handle_browse_request(request, bucket);
 	}
 
-	// 只传 range，条件交给 evaluate_conditionals 自己算：R2 的 onlyIf 在条件不满足时
-	// 只返回一个没有 body 的对象，无法区分 304 与 412；而 RFC 9110 要求 GET/HEAD 的
-	// If-None-Match / If-Modified-Since 不满足时必须回 304。
+	// 条件交给 evaluate_conditionals（R2 的 onlyIf 区分不出 304 / 412）。
 	const object = await bucket.get(resource_path, { range: request.headers });
 
 	if (object === null) {
@@ -364,15 +342,12 @@ async function handle_put(request: Request, bucket: R2Bucket): Promise<Response>
 
 	let resource_path = make_resource_path(request);
 
-	// macOS 上传文件时会附带 PUT 一个 ._xxx 影子文件（扩展属性 / resource fork），
-	// 直接丢弃并回 201：回错误会让 Finder 报错重试，存下来则是一堆无意义对象
+	// macOS 会附带 PUT `._xxx` 影子文件：丢弃并回 201（回错误会让 Finder 重试）。
 	if (is_os_metadata_key(resource_path)) {
 		return new Response('', { status: 201 });
 	}
 
-	// WebDAV 没有标准的分块上传语义。旧实现把 Content-Range 当普通 PUT 处理，
-	// 于是"上传第 2 块"会整体覆盖掉第 1 块，静默产出被截断的文件。明确拒绝，
-	// 不要让客户端以为续传成功了。
+	// WebDAV 没有标准的分块上传语义：明确拒绝，不能让客户端以为续传成功了。
 	if (request.headers.has('Content-Range')) {
 		return new Response('Partial uploads are not supported', { status: 501 });
 	}
@@ -381,14 +356,12 @@ async function handle_put(request: Request, bucket: R2Bucket): Promise<Response>
 	if (dirpath !== '') {
 		const parent = await bucket.head(dirpath);
 		if (parent === null) {
-			// Finder 等客户端会直接 PUT 深层路径而不先 MKCOL，这里自动补建父目录
+			// Finder 等客户端会直接 PUT 深层路径而不先 MKCOL：自动补建父目录。
 			await bucket.put(dirpath, new Uint8Array(), {
 				customMetadata: { resourcetype: '<collection />' },
 			});
 		} else if (!is_collection(parent)) {
-			// RFC 4918 §9.7.1：中间路径存在但丯非集合 → 409。
-			// 旧实现只检查"是否存在"，父路径是个文件时也照写，
-			// 结果同一个 key 对 PROPFIND 是文件、对网页界面却是目录。
+			// RFC 4918 §9.7.1：中间路径存在但不是集合 → 409。
 			return new Response('Conflict', { status: 409 });
 		}
 	}
@@ -399,8 +372,7 @@ async function handle_put(request: Request, bucket: R2Bucket): Promise<Response>
 		httpMetadata: request.headers,
 	});
 
-	// R2 在写前条件不满足时返回 null（不抛错）。旧实现忽略了返回值，把被 R2 拒绝的
-	// 写入谎报成 201 Created —— 客户端以为上传成功，实际拿到的是旧内容。
+	// R2 在写前条件不满足时返回 null（不抛错），不能当成成功。
 	if (stored === null) {
 		return new Response('Precondition Failed', { status: 412 });
 	}
@@ -413,13 +385,11 @@ async function handle_delete(request: Request, bucket: R2Bucket): Promise<Respon
 }
 
 /**
- * 按**已解码**的路径删除。单独抽出来给 MOVE 复用：MOVE 需要先删掉目标，
- * 若通过"拼 URL 再重建 Request"的方式复用，含字面 `%` 的 key 会在反复编解码中错位。
+ * 按**已解码**的路径删除。MOVE 也要用：走"拼 URL 再重建 Request"会让含字面 `%`
+ * 的 key 在反复编解码中错位。
  */
 async function delete_path(bucket: R2Bucket, resource_path: string): Promise<Response> {
-	// 旧实现把 DELETE / 当成"清空整个 bucket"执行：任何客户端（包括同步软件的探测
-	// 请求）对根路径发一次 DELETE 就会不可逆地销毁全部数据。这里明确拒绝，
-	// 需要整桶清空请直接对 R2 bucket 操作。
+	// 拒绝 DELETE /：任何客户端（含同步软件的探测请求）都会不可逆地清空整个桶。
 	if (resource_path === '') {
 		return new Response('Refusing to delete the bucket root', { status: 403 });
 	}
@@ -496,11 +466,8 @@ async function handle_mkcol(request: Request, bucket: R2Bucket): Promise<Respons
 type PropfindRequest = { mode: 'allprop' | 'propname' | 'prop'; names: string[] };
 
 /**
- * 解析 PROPFIND 请求体。
- *
- * 无 body 或 `<allprop/>` → 全部属性；`<propname/>` → 只要属性名；
- * `<prop>…</prop>` → 只返回点名的属性（RFC 4918 §9.1）。
- * 旧实现完全忽略请求体，无论客户端要什么都返回全部 13 个属性。
+ * 解析 PROPFIND 请求体（RFC 4918 §9.1）：
+ * 无 body 或 `<allprop/>` → 全部属性；`<propname/>` → 只要属性名；`<prop>` → 点名的属性。
  */
 async function parse_propfind_body(request: Request): Promise<PropfindRequest> {
 	const text = (await request.text()).trim();
@@ -539,12 +506,9 @@ function propstat(inner: string, status: string): string {
 /**
  * 生成一条 <response>。
  *
- * `object` 为 null 表示没有标记对象的条目（桶根或隐式目录）；`collection` 为 true 时
- * href 必须带尾斜杠，否则客户端会把它当文件。
- * 被点名但不存在的属性按 RFC 4918 §9.1 用 404 propstat 回报。
- *
- * `locks` 是整张锁表；`lockdiscovery` 由它当场渲染（§15.8：没有锁时属性仍然存在，只是
- * 含 0 个 <activelock>，所以不能简单省略这个属性）。
+ * `collection` 为 true 时 href 必须带尾斜杠，否则客户端会当成文件；
+ * 被点名但不存在的属性按 RFC 4918 §9.1 用 404 propstat 回报；
+ * lockdiscovery 即使没有锁也要出现（§15.8）。
  */
 function generate_propfind_response(
 	key: string,
@@ -651,15 +615,13 @@ async function handle_propfind(request: Request, bucket: R2Bucket): Promise<Resp
 				break;
 			}
 			default: {
-				// RFC 4918 §10.2：Depth 不是 0/1/infinity 时要求回 400（旧实现回 403）
+				// RFC 4918 §10.2：Depth 不是 0/1/infinity → 400
 				return new Response('Bad Request', { status: 400 });
 			}
 		}
 	}
 
-	// 截断必须显式暴露：WebDAV 没有分页游标，客户端拿不到超限以后的条目，
-	// 静默截断会让它以为目录里只有这些内容。<responsedescription> 是 RFC 4918 里的
-	// 合法元素，再额外给一个响应头方便脚本与运维检测。
+	// 截断必须显式暴露：WebDAV 没有分页游标，静默截断会让客户端以为目录里只有这些。
 	if (truncated) {
 		page += `\n<responsedescription>Listing truncated at ${PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST} entries; this collection has more members than can be enumerated in a single response.</responsedescription>`;
 	}
@@ -698,17 +660,8 @@ async function parse_proppatch_body(request: Request): Promise<{ set: string[]; 
 /**
  * PROPPATCH。
  *
- * 旧实现在这里用 HTMLRewriter 解析，但处理器只注册在 `propertyupdate` 一个元素上，
- * `<set>` / `<remove>` / 具体属性从未被访问，`setProperties` 永远是空的 —— 于是响应是
- * 一个**空的 <multistatus>**：既没解析、也没存储、也没告诉客户端失败。
- *
- * 现在按 RFC 4918 §9.2 明确回答：这些属性都不会被设置，因此逐个报 403
- * （§9.2 要求服务器不设置的属性必须回 403，并且整个请求必须原子地失败）。
- *
- * 不实现“死属性”是刻意的取舍：R2 binding 没有“只改元数据”的接口，要存属性就必须把整个
- * 对象重传一遍（自定义元数据还有 2 KiB 上限），而 Finder / Windows 每次上传都会发
- * PROPPATCH —— 代价与收益完全不成比例。所以这里保持零写入，并如实告知客户端。
- * 若将来确实需要死属性，正确做法是旁路对象（sidecar）或 Durable Objects。
+ * 不支持死属性，所以保持零写入，并按 RFC 4918 §9.2 逐个报 403（该节要求未设置的属性回
+ * 403，且整个请求原子失败）。R2 没有“只改元数据”的接口，存属性就得把对象重传一遍。
  */
 async function handle_proppatch(request: Request, bucket: R2Bucket): Promise<Response> {
 	const resource_path = make_resource_path(request);
@@ -749,7 +702,7 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 	if (destination instanceof Response) {
 		return destination;
 	}
-	// 覆盖桶根本身没有意义，旧实现会把内容散落到根目录
+	// 覆盖桶根本身没有意义
 	if (destination === '') {
 		return new Response('Conflict', { status: 409 });
 	}
@@ -776,8 +729,7 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 
 	const done = () => (destination_exists ? new Response(null, { status: 204 }) : new Response('', { status: 201 }));
 
-	// 成员数超限时必须在**任何写操作之前**失败：旧实现只处理前 3000 个成员却照常回 201，
-	// 客户端以为整体成功，实际少了数据。
+	// 成员数超限必须在任何写操作之前失败，不能只处理一部分。
 	let members: R2Object[] | null = null;
 	if (resource.is_collection && (request.headers.get('Depth') ?? 'infinity') === 'infinity') {
 		const listing = await listRecursive(bucket, resource_path + '/');
@@ -857,8 +809,7 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 
 async function handle_move(request: Request, bucket: R2Bucket): Promise<Response> {
 	let resource_path = make_resource_path(request);
-	// RFC 4918 §10.6：请求未携带 Overwrite 时视作 T。旧实现只在显式 T 时覆盖，
-	// 于是 Finder/rclone 的"覆盖式改名"全部收到 412，而且与 COPY 的默认值相反。
+	// RFC 4918 §10.6：未携带 Overwrite 时视作 T（注意与 COPY 的默认值相反）。
 	const overwrite = request.headers.get('Overwrite') !== 'F';
 	const destination = resolve_destination(request, request.headers.get('Destination'));
 	if (destination instanceof Response) {
@@ -891,9 +842,7 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 	const done = () => (destination_exists ? new Response(null, { status: 204 }) : new Response('', { status: 201 }));
 
 	const depth = request.headers.get('Depth') ?? 'infinity';
-	// RFC 4918 §9.9.3：集合的 MOVE 只允许 Depth: infinity。旧实现在 Depth: 0 时只搬走
-	// 目录标记对象，子对象全部留在原 prefix 下 —— 那批对象随后既不出现在任何列表里，
-	// 也无法用原来的路径删除，只能按完整 key 或整桶操作才能到达。
+	// RFC 4918 §9.9.3：集合的 MOVE 只允许 Depth: infinity（否则子对象会变成孤儿）。
 	if (resource.is_collection && depth !== 'infinity') {
 		return new Response('Depth must be infinity for MOVE on a collection', { status: 400 });
 	}
@@ -1030,11 +979,7 @@ function lock_remaining(lock: LockRecord): number {
 }
 
 /**
- * 读取锁表，顺带丢掉已过期、以及锁根已不存在的记录。
- *
- * RFC 4918 §6.1 第 8 点要求锁根变成未映射 URL 时锁必须跟着消失。用“读取时校验”实现，
- * 就不用去改 DELETE / MOVE 那几条热路径；代价是每次读锁表多几个 head，而锁的数量
- * 本来就是个位数。
+ * 读取锁表，顺带丢掉已过期、以及锁根已不存在的记录（RFC 4918 §6.1 第 8 点）。
  */
 async function read_locks(bucket: R2Bucket): Promise<LockRecord[]> {
 	const object = await bucket.get(LOCK_STORE_KEY);
@@ -1129,11 +1074,7 @@ function parse_lockinfo(body: string): { scope: LockScope; owner: string } | nul
 }
 
 /**
- * 渲染一条 <activelock>。
- *
- * `<lockroot>` 在 §14.1 的 DTD 里是**必需**元素（客户端靠它判断锁覆盖到哪），
- * 而 §14.12 明确要求“SHOULD include this in all DAV:lockdiscovery values and the
- * response to LOCK requests” —— 旧实现从来没给过。
+ * 渲染一条 <activelock>。`<lockroot>` 在 §14.1 的 DTD 里是必需元素。
  */
 function render_activelock(lock: LockRecord, root_href: string): string {
 	const owner = lock.owner === '' ? '' : `<owner>${lock.owner}</owner>`;
@@ -1166,12 +1107,7 @@ function precondition_error(status: number, condition: string, hrefs: string[]):
 	return new Response(body, { status: status, headers: { 'Content-Type': 'application/xml' } });
 }
 
-/**
- * RFC 4918 §9.10。
- *
- * 旧实现是个彻底的假桩：任何请求都发一个新 token 并回 200（LOCK 不存在的资源也回 200）、
- * 已持有的锁再锁一次照旧回 200、`<lockroot>` 从来没有、Timeout 头不回、刷新锁也不认。
- */
+/** RFC 4918 §9.10。 */
 async function handle_lock(request: Request, bucket: R2Bucket): Promise<Response> {
 	const resource_path = make_resource_path(request);
 	const depth_header = request.headers.get('Depth');
@@ -1269,7 +1205,7 @@ async function handle_lock(request: Request, bucket: R2Bucket): Promise<Response
 	});
 }
 
-/** RFC 4918 §9.11。旧实现无条件回 204，连令牌都从不校验。 */
+/** RFC 4918 §9.11。 */
 async function handle_unlock(request: Request, bucket: R2Bucket): Promise<Response> {
 	const resource_path = make_resource_path(request);
 	const header = request.headers.get('Lock-Token');
