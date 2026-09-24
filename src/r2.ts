@@ -1,14 +1,8 @@
 // R2 访问的共享工具，被 WebDAV 层与页面层复用。
 
 /**
- * 把请求路径里的百分号编码还原成真实文件名。
- *
- * 客户端按 RFC 3986 发送编码后的路径（空格 = `%20`，中文 = UTF-8 的 `%XX`），
- * 而存进 R2 的应该是真实文件名。旧实现直接用 `URL.pathname`，于是 `my file.txt` 会以
- * `my%20file.txt` 作为 key 存下来：R2 控制台、S3 API、`wrangler r2 object` 看到的
- * 都是这串编码，与 WebDAV 侧的名字对不上。
- *
- * 逐段解码：`%2F` 在 URI 语义里并不是路径分隔符，整体解码会改变路径层级。
+ * 把请求路径里的百分号编码还原成真实文件名（RFC 3986）。
+ * 逐段解码：`%2F` 不是路径分隔符，整体解码会改变层级。
  */
 export function decode_path(path: string): string {
 	return path
@@ -31,11 +25,9 @@ export function encode_path(path: string): string {
 // Performance configuration constants
 export const PERFORMANCE_CONFIG = {
 	MAX_OBJECTS_PER_REQUEST: 3000, // Limit for directory listings
-	// Cloudflare 限制每次调用最多 6 个正在等待响应头的连接，R2 的 list/get/put/delete/head
-	// 都计入该限制。旧值 50 永远达不到，只会让 50 个 Promise 先排队、再一起等最慢的那个。
+	// Cloudflare 限制每次调用最多 6 个等待响应头的连接，R2 的 list/get/put/delete/head 都算。
 	MAX_CONCURRENT_OPERATIONS: 6,
-	// R2 的 delete() 每次最多接受 1000 个 key（见 Workers API reference）。旧值写成 3000，
-	// 只是因为 key 都来自 list() 的分页（每页 ≤1000）才碰巧没有越界。
+	// R2 的 delete() 每次最多接受 1000 个 key。
 	MAX_BATCH_DELETE_SIZE: 1000,
 } as const;
 
@@ -50,13 +42,9 @@ export type ListEntry = {
 /**
  * 列出某个前缀下的**直接**子项（等价于 WebDAV 的 Depth: 1）。
  *
- * R2 的 list() 只返回对象，目录若缺少标记对象（例如由 S3 API 或其它工具直接写入
- * `a/b/c.txt` 而从未创建 `a/`）就只会出现在 `delimitedPrefixes` 里。旧实现完全忽略该
- * 字段，于是这类"隐式目录"在任何列表里都看不到，`DELETE` 也回 404。
- * 这里把两种来源合并，隐式目录合成一条 object 为 null 的条目。
- *
- * 超过 max 条时 `truncated` 为 true：调用方**必须**把它暴露给客户端，
- * 而不是像旧实现那样静默截断（那会让客户端以为目录里只有这些内容）。
+ * R2 的 list() 只返回对象，缺标记对象的目录只出现在 `delimitedPrefixes` 里：
+ * 两种来源都要合并，隐式目录合成一条 object 为 null 的条目。
+ * 超过 max 条时 `truncated` 为 true，调用方必须把它暴露给客户端。
  */
 export async function listDir(
 	bucket: R2Bucket,

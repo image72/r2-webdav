@@ -1,49 +1,19 @@
 /**
  * ONLYOFFICE 打开 / 保存 adapter（可选模块，可以整块下线）。
  *
- * 目标实例（projects/office-website）把 ONLYOFFICE 编辑器和 x2t(WASM) 转换器都跑在
- * **浏览器里**：没有 Document Server，也就没有 `document.url` / `callbackUrl` 那一套
- * 服务端流程（`utils/editor/server.ts` 是个 mock 文档服务器，靠 XHR/fetch 代理喂数据）。
- * 它真正缺的只有两件事，本文件就只做这两件：
+ * 只做两件事：给编辑器一个**不需要凭据**的读取 URL，和一个能接收编辑结果字节的写入端点。
+ * 它是 WebDAV 服务的普通客户端：构造成标准 HTTP 请求（HEAD / GET / PUT，带服务自身
+ * 的 Basic 凭据）交给协议层，**绝不碰 bucket**。
  *
- *   1. 打开：一个**不需要凭据**、能取到文件字节的 URL。
- *      编辑器那边是 `fetch(url).then(res => res.arrayBuffer())` —— 裸 fetch，既不会带
- *      Basic 凭据，也没法带自定义头，所以这个 URL 只能自己签名。
- *   2. 保存：一个能接收编辑结果字节的写入端点。编辑器在浏览器里跑完转换后，由宿主页面
- *      把结果 POST/PUT 回来。
+ * 两种模式（看有没有配 `SIGNING_SECRET`，客户端接口一样）：`url` / `saveUrl` 要么是该文件
+ * 自己的 WebDAV 地址（要求编辑器页面与 WebDAV 同源），要么是短期 HMAC 短链（跨源必需）。
+ * 本地 localhost 与 127.0.0.1、线上 pages.dev 与 workers.dev 都算跨源。
  *
- * 本模块是 WebDAV 服务的**普通客户端**：所有读写都构造成标准 HTTP 请求（HEAD / GET / PUT 到
- * 文件自己的 URL，带上服务自身的 Basic 凭据），交给 WebDAV 协议层处理，**绝不碰 bucket**。
- * 好处是写入路径与其它客户端完全一致（父目录补建、影子文件过滤、PUT 前置条件都由 WebDAV
- * 那层负责）。类型上 `OnlyOfficeEnv` 里根本没有 bucket —— 想碰也碰不到。
+ * 传输层由 index.ts 注入且走进程内调用：不能 `fetch()` 自己的 hostname，生产环境
+ * Worker 自调用会被平台拦掉（404 + `error code 1042`），Miniflare 里看不出这个问题。
  *
- * 传输方式由 index.ts 注入（`WebdavTransport`），走**进程内**调用：不能改成 `fetch()` 自己的
- * hostname —— 生产环境 Worker 自调用会被平台拦掉（实测 404 + `error code 1042`），而
- * Miniflare 里看不出这个问题。对 adapter 来说它仍只是一个 Request→Response 的 HTTP 端点。
- *
- * 代价：每次操作多 1~2 次协议层调用（进程内，不消耗子请求配额）。
- *
- * token 的签发/校验原语在 signing.ts —— 那层是所有浏览器在线服务（drawio、Photopea…）
- * 共用的，不专属于 ONLYOFFICE。
- *
- * 响应体里的错误消息一律用**简短的英语**，并尽量给结构化字段（`allow`、`supported`），
- * 而不是把说明性文案写死在消息里 —— 这个仓库要能继续当其它项目的基础库复用，面向用户的
- * 措辞该由调用方决定（webdav.ts / r2.ts 早就是英语，这里保持一致）。
- *
- * 两种模式（用有没有配 `SIGNING_SECRET` 自动切换，客户端接口完全一样）：
- *
- *   直连（默认）：`url` / `saveUrl` 就是该文件自己的 WebDAV 地址 —— 打开走原生 GET、
- *     保存走原生 PUT。前提是**编辑器页面与 WebDAV 同源**：同源请求浏览器的 fetch 会自动
- *     补上已缓存的 Basic 凭据，所以不需要任何额外授权机制。
- *   签名（配了 secret）：发短期 HMAC 短链。跨源时必需 —— 跨源 fetch 默认不带凭据，
- *     而我们的 CORS 是 `Allow-Origin: *` + `Allow-Credentials: false`，Basic 送不过去。
- *
- * 怎么判断自己属于哪种：本地 `localhost:3000` 与 `127.0.0.1:8790`、线上 `*.pages.dev` 与
- * `*.workers.dev` 都是**跨源**，那种情况必须用签名模式；只有把编辑器页面挂到与 WebDAV
- * 同一个 host:port 上，直连模式才成立。
- *
- * 为了能干净下掉，这里**不碰** webdav.ts / r2.ts / index.html：要下线就删掉本文件 +
- * index.ts 里搜 `ONLYOFFICE` 的那几处接线，其余代码根本不知道它存在过。
+ * 错误消息一律用简短英语 + 结构化字段。
+ * 协议细节、启用方式与自测见 docs/onlyoffice.md。
  */
 
 import { encode_path } from './r2';
@@ -88,11 +58,7 @@ const EXTENSION_TYPES: Record<string, { documentType: string; contentType: strin
 };
 
 /**
- * 把「一个标准 Request」交给本服务的 WebDAV 协议层，拿回 Response。
- *
- * 由 index.ts 注入（那里是 `(req) => dispatch_handler(req, bucket)`）：进程内调用，不走网络。
- * 为何不在这里直接 `fetch()` 自己的 hostname —— 生产环境会被平台拦掉，实测返回 404 +
- * `error code 1042`（Miniflare 里不复现），详见 index.ts 的接线注释。
+ * 把「一个标准 Request」交给本服务的 WebDAV 协议层，拿回 Response；由 index.ts 注入。
  */
 export type WebdavTransport = (request: Request) => Promise<Response>;
 
