@@ -1661,958 +1661,970 @@
 
 		<script>
 			// 归档逻辑在 src/archive.client.js。
+			// 整块包在 IIFE 里：MARKDOWN_EXTENSIONS / HAPTIC / buzz() 这些实现细节不挂到 window，
+			// 唯一的全局出口是 window.browser（Alpine 的 x-data 按名字取它）。
+			(() => {
+				// 与 src/ui.ts 的 MARKDOWN_EXTENSIONS 保持一致。
+				const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'mdown'];
 
-			// 与 src/ui.ts 的 MARKDOWN_EXTENSIONS 保持一致。
-			const MARKDOWN_EXTENSIONS = ['md', 'markdown', 'mdown'];
+				// 不要放进 $data：Alpine 会深度代理它。
+				let markdown_renderer = null;
 
-			// 不要放进 $data：Alpine 会深度代理它。
-			let markdown_renderer = null;
+				// 长按判定：500ms，容差 10px。
+				const LONG_PRESS_MS = 500;
+				const LONG_PRESS_MOVE = 10;
 
-			// 长按判定：500ms，容差 10px。
-			const LONG_PRESS_MS = 500;
-			const LONG_PRESS_MOVE = 10;
-
-			function markdown_to_html(text) {
-				if (!markdown_renderer) {
-					markdown_renderer = window.markdownit({ html: true, linkify: true, typographer: true, breaks: true });
+				function markdown_to_html(text) {
+					if (!markdown_renderer) {
+						markdown_renderer = window.markdownit({ html: true, linkify: true, typographer: true, breaks: true });
+					}
+					return markdown_renderer.render(text);
 				}
-				return markdown_renderer.render(text);
-			}
 
-			/**
-			 * 触感反馈。
-			 *
-			 * iOS Safari 没有 `navigator.vibrate`，所以调用处要有视觉替代；不支持就静默跳过。
-			 * 时长 / 节奏区分轻重（轻点最短、完成两下、失败两下更重），不要全做一样长。
-			 */
-			const HAPTIC = { tap: 8, press: 16, done: [12, 40, 24], error: [28, 60, 28] };
+				/**
+				 * 触感反馈。
+				 *
+				 * iOS Safari 没有 `navigator.vibrate`，所以调用处要有视觉替代；不支持就静默跳过。
+				 * 时长 / 节奏区分轻重（轻点最短、完成两下、失败两下更重），不要全做一样长。
+				 */
+				const HAPTIC = { tap: 8, press: 16, done: [12, 40, 24], error: [28, 60, 28] };
 
-			function buzz(kind) {
-				try {
-					if (typeof navigator.vibrate === 'function') navigator.vibrate(HAPTIC[kind] || HAPTIC.tap);
-				} catch {
-					// 个别 WebView 会直接抛，别让反馈失败影响主流程。
+				function buzz(kind) {
+					try {
+						if (typeof navigator.vibrate === 'function') navigator.vibrate(HAPTIC[kind] || HAPTIC.tap);
+					} catch {
+						// 个别 WebView 会直接抛，别让反馈失败影响主流程。
+					}
 				}
-			}
 
-			// en is injected inline (window.__LOCALES__); other packs load on demand from /_app/locales/<code>.json.
-			const FALLBACK_LOCALE = window.__LOCALES__ || { en: {} };
-			const SUPPORTED_LANGS = window.__LOCALE_CODES__ || ['en'];
-			const LANG_KEY = 'r2dav.lang';
+				// en is injected inline (window.__LOCALES__); other packs load on demand from /_app/locales/<code>.json.
+				const FALLBACK_LOCALE = window.__LOCALES__ || { en: {} };
+				const SUPPORTED_LANGS = window.__LOCALE_CODES__ || ['en'];
+				const LANG_KEY = 'r2dav.lang';
 
-			function resolve_lang() {
-				const fromQuery = new URLSearchParams(location.search).get('lang');
-				if (SUPPORTED_LANGS.includes(fromQuery)) return fromQuery;
-				let saved = null;
-				try {
-					saved = localStorage.getItem(LANG_KEY);
-				} catch {}
-				if (SUPPORTED_LANGS.includes(saved)) return saved;
-				const nav = (navigator.language || 'en').toLowerCase();
-				if (SUPPORTED_LANGS.includes(nav)) return nav;
-				const base = nav.split('-')[0];
-				return SUPPORTED_LANGS.includes(base) ? base : 'en';
-			}
+				function resolve_lang() {
+					const fromQuery = new URLSearchParams(location.search).get('lang');
+					if (SUPPORTED_LANGS.includes(fromQuery)) return fromQuery;
+					let saved = null;
+					try {
+						saved = localStorage.getItem(LANG_KEY);
+					} catch {}
+					if (SUPPORTED_LANGS.includes(saved)) return saved;
+					const nav = (navigator.language || 'en').toLowerCase();
+					if (SUPPORTED_LANGS.includes(nav)) return nav;
+					const base = nav.split('-')[0];
+					return SUPPORTED_LANGS.includes(base) ? base : 'en';
+				}
 
-			window.browser = function () {
-				return {
-					lang: resolve_lang(),
-					// 已加载的语言包（含内联 en）；放进组件里才有响应式，切语言后所有 t() 绑定会重算。
-					locales: { ...FALLBACK_LOCALE },
-					async init() {
-						this.load();
-						this.scrollCrumbs();
-						if (this.lang !== 'en') await this.setLang(this.lang, { save: false });
-						document.addEventListener('keydown', (event) => {
-							if (event.key !== 'Escape') return;
-							if (this.confirmTarget) this.confirmTarget = null;
-							else if (this.uploadConflicts) this.uploadConflicts = null;
-							else if (this.sheet) this.closeAllPanels();
-							else if (this.folder.open) this.folder.open = false;
-							else if (this.newMenu) this.newMenu = false;
-							else if (this.editor.open) this.requestCloseEditor();
-							else if (this.viewer.open) this.closeViewer();
-						});
-					},
-					async setLang(lang, options) {
-						if (!SUPPORTED_LANGS.includes(lang)) return;
-						if (!this.locales[lang]) {
-							try {
-								const response = await fetch('/_app/locales/' + lang + '.json');
-								if (response.ok) this.locales[lang] = await response.json();
-							} catch {}
-						}
-						if (this.locales[lang]) this.lang = lang;
-						document.documentElement.lang = lang === 'zh' ? 'zh-CN' : lang;
-						if (!(options && options.save === false)) {
-							try {
-								localStorage.setItem(LANG_KEY, lang);
-							} catch {}
-						}
-						const url = new URL(location.href);
-						url.searchParams.delete('lang');
-						history.replaceState(null, '', url.pathname + url.search + url.hash);
-					},
-					t(key, vars) {
-						let message = this.locales[this.lang] && this.locales[this.lang][key];
-						if (message === undefined) message = FALLBACK_LOCALE.en[key];
-						if (message === undefined) return key;
-						if (vars) for (const name in vars) message = message.split('{' + name + '}').join(vars[name]);
-						return message;
-					},
-					entries: [],
-					truncated: false,
-					loading: true,
-					error: '',
-					busy: false,
-					// 归档进行中的 AbortController；既挡重入，也决定提示条上是否出现「取消」。
-					archiveAbort: null,
-					// 长按手势状态：pressTimer 非空＝正在计时；pressFired＝这次长按已弹过面板。
-					pressTimer: null,
-					pressAt: null,
-					pressFired: false,
-					dragging: false,
-					toast: '',
-					// 进度态（定宽，见 .toast--progress）；复位只在提示条隐藏时做。
-					toastProgress: false,
-					sheet: null,
-					// 服务端注入的编辑器配置（见 index.ts）；null = 不显示入口。
-					onlyoffice: (window.__APP_CONFIG__ && window.__APP_CONFIG__.onlyoffice) || null,
-					confirmTarget: null,
-					uploadConflicts: null,
-					newMenu: false,
-					folder: { open: false, name: '', busy: false, error: '' },
-					rename: { active: false, original: '', draft: '', error: '', pending: null },
-					viewer: {
-						open: false,
-						entry: null,
-						kind: '',
-						title: '',
-						href: '',
-						status: 'loading',
-						text: '',
-						html: '',
+				window.browser = function () {
+					return {
+						lang: resolve_lang(),
+						// 已加载的语言包（含内联 en）；放进组件里才有响应式，切语言后所有 t() 绑定会重算。
+						locales: { ...FALLBACK_LOCALE },
+						async init() {
+							this.load();
+							this.scrollCrumbs();
+							if (this.lang !== 'en') await this.setLang(this.lang, { save: false });
+							document.addEventListener('keydown', (event) => {
+								if (event.key !== 'Escape') return;
+								if (this.confirmTarget) this.confirmTarget = null;
+								else if (this.uploadConflicts) this.uploadConflicts = null;
+								else if (this.sheet) this.closeAllPanels();
+								else if (this.folder.open) this.folder.open = false;
+								else if (this.newMenu) this.newMenu = false;
+								else if (this.editor.open) this.requestCloseEditor();
+								else if (this.viewer.open) this.closeViewer();
+							});
+						},
+						async setLang(lang, options) {
+							if (!SUPPORTED_LANGS.includes(lang)) return;
+							if (!this.locales[lang]) {
+								try {
+									const response = await fetch('/_app/locales/' + lang + '.json');
+									if (response.ok) this.locales[lang] = await response.json();
+								} catch {}
+							}
+							if (this.locales[lang]) this.lang = lang;
+							document.documentElement.lang = lang === 'zh' ? 'zh-CN' : lang;
+							if (!(options && options.save === false)) {
+								try {
+									localStorage.setItem(LANG_KEY, lang);
+								} catch {}
+							}
+							const url = new URL(location.href);
+							url.searchParams.delete('lang');
+							history.replaceState(null, '', url.pathname + url.search + url.hash);
+						},
+						t(key, vars) {
+							let message = this.locales[this.lang] && this.locales[this.lang][key];
+							if (message === undefined) message = FALLBACK_LOCALE.en[key];
+							if (message === undefined) return key;
+							if (vars) for (const name in vars) message = message.split('{' + name + '}').join(vars[name]);
+							return message;
+						},
+						entries: [],
+						truncated: false,
+						loading: true,
 						error: '',
-					},
-					editor: {
-						open: false,
-						href: '',
-						name: '',
-						text: '',
-						contentType: null,
-						dirty: false,
-						conflict: false,
 						busy: false,
-						error: '',
-						confirmDiscard: false,
-						// 三者只在打开 / 关闭编辑器时重置，编辑 ⇄ 查看之间来回切不丢。
-						preview: false,
-						html: '',
-						renderedFrom: '',
-					},
-
-					/** 弹出文件操作面板；kind 区分长按 / 轻点。 */
-					selectEntry(entry, kind) {
-						this.commitRename();
-						this.sheet = entry;
-						buzz(kind || 'tap');
-					},
-
-					/** 长按（触屏 / 触控笔）弹出文件操作面板。 */
-					pressDown(entry, event) {
-						// 鼠标不参与：桌面端的等价物是右键。
-						if (event.pointerType === 'mouse') return;
-						this.clearPressTimer();
-						this.pressAt = { name: entry.name, x: event.clientX, y: event.clientY };
-						// pointerdown 一定先于 click，每次按下都重置，避免残留标记吞掉后续点击。
-						this.pressFired = false;
-						this.pressTimer = setTimeout(() => {
-							this.pressTimer = null;
-							this.pressFired = true;
-							this.selectEntry(entry, 'press');
-						}, LONG_PRESS_MS);
-					},
-
-					/** 手指移动超过容差就取消长按（列表要能滑）。 */
-					pressMove(event) {
-						if (this.pressTimer === null || !this.pressAt) return;
-						if (
-							Math.abs(event.clientX - this.pressAt.x) > LONG_PRESS_MOVE ||
-							Math.abs(event.clientY - this.pressAt.y) > LONG_PRESS_MOVE
-						) {
-							this.pressUp();
-						}
-					},
-
-					pressUp() {
-						this.clearPressTimer();
-						this.pressAt = null;
-					},
-
-					clearPressTimer() {
-						if (this.pressTimer !== null) {
-							clearTimeout(this.pressTimer);
-							this.pressTimer = null;
-						}
-					},
-
-					/** 吃掉长按之后必然到来的那个 click，在捕获阶段拦。 */
-					swallowPressClick(event) {
-						if (!this.pressFired) return;
-						this.pressFired = false;
-						event.preventDefault();
-						event.stopPropagation();
-					},
-
-					/** 每个关闭 / 切换面板的路径都显式提交改名（@blur 靠不住，见下）。 */
-					closeAllPanels() {
-						this.commitRename();
-						this.sheet = null;
-						this.confirmTarget = null;
-						this.newMenu = false;
-						this.folder.open = false;
-						this.uploadConflicts = null;
-					},
-
-					async load() {
-						this.loading = true;
-						this.error = '';
-						try {
-							const response = await fetch(location.pathname + '?format=json', {
-								credentials: 'include',
-								headers: { Accept: 'application/json' },
-							});
-							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-							const data = await response.json();
-							this.entries = data.entries;
-							this.truncated = data.truncated === true;
-						} catch (err) {
-							this.error = this.t('loadFailed', { msg: err.message });
-						} finally {
-							this.loading = false;
-						}
-					},
-
-					get crumbs() {
-						const parts = decodeURIComponent(location.pathname).split('/').filter(Boolean);
-						const trail = [{ label: this.t('rootDir'), href: '/' }];
-						let path = '';
-						for (const part of parts) {
-							path += '/' + part;
-							trail.push({ label: part, href: path + '/' });
-						}
-						return trail;
-					},
-
-					/** 把面包屑滚到末尾。 */
-					scrollCrumbs() {
-						this.$nextTick(() => {
-							const el = this.$refs.crumbs;
-							if (el) el.scrollLeft = el.scrollWidth;
-						});
-					},
-
-					iconFor(entry) {
-						if (entry.isDir) return 'folder';
-						if (entry.kind) return entry.kind;
-						return /\.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name) ? 'archive' : 'file';
-					},
-
-					metaFor(entry) {
-						if (entry.isDir) return this.t('dirLabel');
-						return this.formatSize(entry.size) + ' · ' + this.formatDate(entry.modified);
-					},
-
-					/** 只有文本类文件可在网页里编辑。 */
-					canEdit(entry) {
-						return !!entry && (entry.kind === 'text' || entry.kind === 'markdown');
-					},
-
-					/**
-					 * 常见办公文档可用在线 ONLYOFFICE 打开。
-					 *
-					 * 扩展名清单由服务端给（adapter 放行的那份），前端不维护第二份。
-					 */
-					canOpenInOnlyOffice(entry) {
-						if (!entry || entry.isDir || !this.onlyoffice) return false;
-						const dot = entry.name.lastIndexOf('.');
-						const extension = dot === -1 ? '' : entry.name.slice(dot + 1).toLowerCase();
-						return this.onlyoffice.extensions.indexOf(extension) !== -1;
-					},
-
-					/**
-					 * 用在线 ONLYOFFICE 打开：先要一份带签名短链的会话，再打开编辑器页面。
-					 */
-					async openInOnlyOffice(entry) {
-						await this.settleRename();
-						this.sheet = null;
-						buzz('tap');
-						try {
-							// href 已编码，服务端会再解一次，这里必须先 decode。
-							const query = new URLSearchParams({ path: decodeURIComponent(entry.href) });
-							const response = await fetch('/onlyoffice/session?' + query, {
-								credentials: 'include',
-							});
-							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-							const session = await response.json();
-							const editor_query = new URLSearchParams({
-								url: session.url,
-								fileType: session.fileType,
-								fileName: session.title,
-							});
-							const target = this.onlyoffice.editorUrl + '?' + editor_query;
-							// 新页面打开编辑器。注意不能带 noopener：设了它 window.open 按规范返回 null，
-							// 会误判成弹窗被拦、每次都退回当前页跳转。改为打开后再断开 opener。
-							const popup = window.open(target, '_blank');
-							if (popup) popup.opener = null;
-							// 被弹窗拦截时（iOS Safari）退回当前页。
-							else location.href = target;
-						} catch (err) {
-							this.notify(this.t('onlyofficeFailed', { msg: err.message }), 'error');
-						}
-					},
-
-					formatSize(bytes) {
-						const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-						let value = bytes;
-						let unit = 0;
-						while (value >= 1024 && unit < units.length - 1) {
-							value = value / 1024;
-							unit++;
-						}
-						return (unit === 0 ? value : value.toFixed(1)) + ' ' + units[unit];
-					},
-
-					formatDate(iso) {
-						const date = new Date(iso);
-						const pad = (n) => String(n).padStart(2, '0');
-						return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
-					},
-
-					pickerRef() {
-						return this.$refs.picker;
-					},
-
-					open(entry) {
-						if (entry.isDir) {
-							location.href = entry.href;
-							return;
-						}
-						if (entry.kind) this.preview(entry);
-						else location.href = entry.href;
-					},
-
-					/** 从预览层进入编辑（先关预览）。 */
-					async editFromViewer() {
-						const entry = this.viewer.entry;
-						if (!entry) return;
-						this.closeViewer();
-						await this.editExisting(entry);
-					},
-
-					async preview(entry) {
-						// 先等改名落盘，否则会去取旧路径。
-						await this.settleRename();
-						buzz('tap');
-						this.sheet = null;
-						this.viewer = {
-							open: true,
-							entry,
-							kind: entry.kind,
-							title: entry.name,
-							href: entry.href,
+						// 归档进行中的 AbortController；既挡重入，也决定提示条上是否出现「取消」。
+						archiveAbort: null,
+						// 长按手势状态：pressTimer 非空＝正在计时；pressFired＝这次长按已弹过面板。
+						pressTimer: null,
+						pressAt: null,
+						pressFired: false,
+						dragging: false,
+						toast: '',
+						// 进度态（定宽，见 .toast--progress）；复位只在提示条隐藏时做。
+						toastProgress: false,
+						sheet: null,
+						// 服务端注入的编辑器配置（见 index.ts）；null = 不显示入口。
+						onlyoffice: (window.__APP_CONFIG__ && window.__APP_CONFIG__.onlyoffice) || null,
+						confirmTarget: null,
+						uploadConflicts: null,
+						newMenu: false,
+						folder: { open: false, name: '', busy: false, error: '' },
+						rename: { active: false, original: '', draft: '', error: '', pending: null },
+						viewer: {
+							open: false,
+							entry: null,
+							kind: '',
+							title: '',
+							href: '',
 							status: 'loading',
 							text: '',
 							html: '',
 							error: '',
-						};
-
-						if (entry.kind !== 'text' && entry.kind !== 'markdown') {
-							this.viewer.status = 'ready';
-							return;
-						}
-
-						try {
-							const response = await fetch(entry.href, { credentials: 'include' });
-							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-							const text = await response.text();
-							if (entry.kind === 'markdown') {
-								await this.loadMarkdown();
-								this.viewer.html = markdown_to_html(text);
-								this.viewer.status = 'ready';
-								// 等 HTML 进 DOM 再画 mermaid。
-								await this.$nextTick();
-								await this.renderMermaid(this.$refs.viewerBody);
-							} else {
-								this.viewer.text = text;
-								this.viewer.status = 'ready';
-							}
-						} catch (err) {
-							this.viewer.status = 'error';
-							this.viewer.error = this.t('previewFailed', { msg: err.message });
-						}
-					},
-
-					loadScript(src) {
-						if (document.querySelector('script[src="' + src + '"]')) return Promise.resolve();
-						return new Promise((resolve, reject) => {
-							const script = document.createElement('script');
-							script.src = src;
-							script.onload = resolve;
-							script.onerror = reject;
-							document.head.appendChild(script);
-						});
-					},
-
-					async loadMarkdown() {
-						await this.loadScript('https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js');
-						await this.loadScript('https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js');
-					},
-
-					// markdown-it 把 mermaid 渲染成 <pre><code>，先换成节点再绘制；root 是包含它的容器。
-					async renderMermaid(root) {
-						if (!window.mermaid || !root) return;
-						root.querySelectorAll('code.language-mermaid').forEach((block) => {
-							const container = document.createElement('div');
-							container.className = 'mermaid';
-							container.textContent = block.textContent;
-							block.parentNode.replaceWith(container);
-						});
-						const nodes = root.querySelectorAll('.mermaid:not([data-processed])');
-						if (nodes.length === 0) return;
-						window.mermaid.initialize({ startOnLoad: false });
-						await window.mermaid.run({ nodes });
-					},
-
-					closeViewer() {
-						this.viewer.open = false;
-						this.viewer.entry = null;
-						this.viewer.href = '';
-						this.viewer.html = '';
-						this.viewer.text = '';
-					},
-
-					/** 新建文本文件时的默认名：在当前目录的条目里挑一个不冲突的（数据已在手上，无需额外请求）。 */
-					default_new_name() {
-						const taken = new Set(this.entries.map((entry) => entry.name));
-						if (!taken.has('untitled.txt')) return 'untitled.txt';
-						for (let index = 2; index < 1000; index++) {
-							const candidate = 'untitled-' + index + '.txt';
-							if (!taken.has(candidate)) return candidate;
-						}
-						return 'untitled.txt';
-					},
-
-					openNewMenu() {
-						buzz('tap');
-						this.newMenu = true;
-					},
-
-					openFolder() {
-						buzz('tap');
-						this.newMenu = false;
-						this.sheet = null;
-						this.folder = { open: true, name: this.default_folder_name(), busy: false, error: '' };
-					},
-
-					/** 同 default_new_name()；用英文是因为目录名会进 URL。 */
-					default_folder_name() {
-						const taken = new Set(this.entries.map((entry) => entry.name));
-						if (!taken.has('new-folder')) return 'new-folder';
-						for (let index = 2; index < 1000; index++) {
-							const candidate = 'new-folder-' + index;
-							if (!taken.has(candidate)) return candidate;
-						}
-						return 'new-folder';
-					},
-
-					/** MKCOL 建目录；405 / 409 如实报错。 */
-					async createFolder() {
-						const name = this.folder.name.trim();
-						const invalid = this.check_name(name, this.t('folderName'));
-						if (invalid) {
-							this.folder.error = invalid;
-							return;
-						}
-
-						this.folder.busy = true;
-						this.folder.error = '';
-						try {
-							// 尾部斜杠是集合的规范写法。
-							const response = await fetch(location.pathname + encodeURIComponent(name) + '/', {
-								method: 'MKCOL',
-								credentials: 'include',
-							});
-							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-							this.folder.open = false;
-							this.notify(this.t('folderCreated', { name }), 'done');
-							await this.load();
-						} catch (err) {
-							this.folder.error = this.t('createFailed', { msg: err.message });
-							buzz('error');
-						} finally {
-							this.folder.busy = false;
-						}
-					},
-
-					/** 点标题进入改名（仅文件）。 */
-					enterRename() {
-						if (!this.sheet || this.sheet.isDir) return;
-						this.rename = { active: true, original: this.sheet.name, draft: this.sheet.name, error: '', pending: null };
-						this.$nextTick(() => {
-							const input = document.getElementById('rename-input');
-							if (!input) return;
-							input.focus();
-							// 只选中主文件名，扩展名留着。
-							const dot = this.rename.draft.lastIndexOf('.');
-							input.setSelectionRange(0, dot > 0 ? dot : this.rename.draft.length);
-						});
-					},
-
-					cancelRename() {
-						this.rename = { active: false, original: '', draft: '', error: '', pending: null };
-					},
-
-					/** 提交改名（= 同目录 MOVE）；返回 pending Promise（无待提交时为 null）。 */
-					commitRename() {
-						if (!this.rename.active) return null;
-						const name = this.rename.draft.trim();
-						if (name === this.rename.original) {
-							this.cancelRename();
-							return null;
-						}
-						const invalid = this.check_name(name, this.t('fileName'));
-						if (invalid) {
-							// 非法名留在编辑态。
-							this.rename.error = invalid;
-							return null;
-						}
-						const entry = this.sheet;
-						if (!entry) {
-							this.cancelRename();
-							return null;
-						}
-						// 先退出编辑态，避免同一个改名被重复提交。
-						this.rename.active = false;
-						this.rename.error = '';
-						this.rename.pending = this.renameEntry(entry, name);
-						return this.rename.pending;
-					},
-
-					/** 等挂起的改名落盘（读 href 前必须先过这一关）。 */
-					async settleRename() {
-						const pending = this.commitRename();
-						if (pending) await pending;
-					},
-
-					async renameEntry(entry, name) {
-						const old_href = entry.href;
-						const new_href = location.pathname + encodeURIComponent(name);
-						try {
-							const response = await fetch(old_href, {
-								method: 'MOVE',
-								credentials: 'include',
-								headers: {
-									// Destination 必须是绝对 URL，host 要和请求完全一致，否则服务端回 502。
-									Destination: location.origin + new_href,
-									// 必须显式 F：MOVE 缺省 T 会先删掉同名目标（目标是目录时递归删光）。
-									Overwrite: 'F',
-								},
-							});
-							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-							this.applyRename(entry, old_href, name, new_href);
-							this.notify(this.t('renamed', { name }), 'done');
-						} catch (err) {
-							this.notify(this.t('renameFailed', { msg: err.message }), 'error');
-						} finally {
-							this.rename.pending = null;
-						}
-						await this.load();
-					},
-
-					/** 改名成功后就地更新 sheet / viewer / editor 持有的引用。 */
-					applyRename(entry, old_href, name, new_href) {
-						entry.name = name;
-						entry.href = new_href; // entry 就是 this.sheet，标题与动作随之更新
-						if (this.viewer.entry === entry) {
-							this.viewer.title = name;
-							this.viewer.href = new_href;
-						}
-						if (this.editor.href === old_href) {
-							this.editor.href = new_href;
-							this.editor.name = name;
-						}
-					},
-
-					/** 下载（目录则打包）。 */
-					async downloadEntry(entry, event) {
-						event.preventDefault();
-						await this.settleRename();
-						if (entry.isDir) return this.zipFolder(entry);
-						buzz('tap');
-						const link = document.createElement('a');
-						link.href = entry.href;
-						link.download = entry.name;
-						document.body.appendChild(link);
-						link.click();
-						link.remove();
-					},
-
-					/** 目录打包下载（实现在 src/archive.client.js）。 */
-					async zipFolder(entry) {
-						await this.runArchive(this.t('archiveCompress'), async (signal, onProgress) => {
-							const result = await window.R2Archive.downloadFolderAsZip(entry, { onProgress, signal });
-							this.notify(this.t('compressed', { count: result.files }), 'done');
-						});
-					},
-
-					/** 只有 zip 能解压。 */
-					canExtract(entry) {
-						return !!entry && !entry.isDir && /\.zip$/i.test(entry.name);
-					},
-
-					canCompress(entry) {
-						return !!entry && entry.isDir;
-					},
-
-					/** 在当前目录生成真实的 <目录名>.zip 对象，不下载。 */
-					async compressEntry(entry) {
-						await this.settleRename();
-						this.sheet = null;
-						await this.runArchive(this.t('archiveCompress'), async (signal, onProgress) => {
-							const result = await window.R2Archive.storeFolderAsZip(entry, { onProgress, signal });
-							this.notify(this.t('zipCreated', { name: entry.name, size: this.formatSize(result.bytes) }), 'done');
-							await this.load();
-						});
-					},
-
-					/** 解压到同名目录（实现在 src/archive.client.js）。 */
-					async extractEntry(entry) {
-						await this.settleRename();
-						this.sheet = null;
-						await this.runArchive(this.t('archiveExtract'), async (signal, onProgress) => {
-							const result = await window.R2Archive.extractZipToFolder(entry, { onProgress, signal });
-							this.notify(this.t('extracted', { count: result.files, dir: entry.name.replace(/\.zip$/i, '') }), 'done');
-							await this.load();
-						});
-					},
-
-					/** 压缩 / 解压的公共外壳：挡重入、把进度接到提示条、结束收掉 AbortController。 */
-					async runArchive(label, task) {
-						if (this.archiveAbort) return;
-						const controller = new AbortController();
-						this.archiveAbort = controller;
-						buzz('tap');
-						try {
-							await task(controller.signal, (text) => this.notifySticky(text));
-						} catch (err) {
-							// 取消不算失败，原样转出模块的说明。
-							this.notify(
-								controller.signal.aborted ? err.message : this.t('archiveFailed', { label, msg: err.message }),
-								controller.signal.aborted ? 'tap' : 'error',
-							);
-						} finally {
-							this.archiveAbort = null;
-						}
-					},
-
-					cancelArchive() {
-						if (this.archiveAbort) this.archiveAbort.abort();
-					},
-
-					check_name(name, label) {
-						if (!name) return this.t('nameRequired', { label });
-						if (name.includes('/') || name.includes('\\')) return this.t('nameNoSlash', { label });
-						return '';
-					},
-
-					openEditor(entry) {
-						buzz('tap');
-						this.newMenu = false;
-						this.sheet = null;
-						this.editor = {
-							open: true,
-							href: entry ? entry.href : '',
-							name: entry ? entry.name : this.default_new_name(),
-							text: entry ? entry.text : '',
-							// 沿用原 Content-Type，不要顺手改掉元数据。
-							contentType: (entry && entry.contentType) || null,
+						},
+						editor: {
+							open: false,
+							href: '',
+							name: '',
+							text: '',
+							contentType: null,
 							dirty: false,
 							conflict: false,
 							busy: false,
 							error: '',
 							confirmDiscard: false,
+							// 三者只在打开 / 关闭编辑器时重置，编辑 ⇄ 查看之间来回切不丢。
 							preview: false,
 							html: '',
 							renderedFrom: '',
-						};
-					},
+						},
 
-					async editExisting(entry) {
-						await this.settleRename();
-						this.sheet = null;
-						try {
-							const response = await fetch(entry.href, { credentials: 'include' });
-							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-							this.openEditor({
-								href: entry.href,
-								name: entry.name,
-								text: await response.text(),
-								contentType: entry.contentType,
-							});
-						} catch (err) {
-							this.notify(this.t('openFailed', { msg: err.message }), 'error');
-						}
-					},
+						/** 弹出文件操作面板；kind 区分长按 / 轻点。 */
+						selectEntry(entry, kind) {
+							this.commitRename();
+							this.sheet = entry;
+							buzz(kind || 'tap');
+						},
 
-					requestCloseEditor() {
-						// 有未保存内容先确认一次。
-						if (this.editor.confirmDiscard) return this.discardEditor();
-						if (this.editor.dirty && this.editor.text) this.editor.confirmDiscard = true;
-						else this.discardEditor();
-					},
+						/** 长按（触屏 / 触控笔）弹出文件操作面板。 */
+						pressDown(entry, event) {
+							// 鼠标不参与：桌面端的等价物是右键。
+							if (event.pointerType === 'mouse') return;
+							this.clearPressTimer();
+							this.pressAt = { name: entry.name, x: event.clientX, y: event.clientY };
+							// pointerdown 一定先于 click，每次按下都重置，避免残留标记吞掉后续点击。
+							this.pressFired = false;
+							this.pressTimer = setTimeout(() => {
+								this.pressTimer = null;
+								this.pressFired = true;
+								this.selectEntry(entry, 'press');
+							}, LONG_PRESS_MS);
+						},
 
-					discardEditor() {
-						this.editor.open = false;
-						this.editor.confirmDiscard = false;
-						this.editor.text = '';
-						this.editor.dirty = false;
-						this.editor.conflict = false;
-						// 只有真正关掉编辑器才丢掉已渲染内容（编辑 ⇄ 查看之间不丢）。
-						this.editor.preview = false;
-						this.editor.html = '';
-						this.editor.renderedFrom = '';
-					},
-
-					/** 「查看」只对 markdown 有意义。 */
-					canPreviewEditor() {
-						const name = this.editor.name || '';
-						const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
-						return MARKDOWN_EXTENSIONS.includes(ext);
-					},
-
-					async toggleEditorPreview() {
-						if (this.editor.preview) {
-							this.editor.preview = false;
-							return;
-						}
-						// mermaid 需要节点先进布局。
-						this.editor.preview = true;
-						this.editor.error = '';
-						try {
-							await this.loadMarkdown();
-							// 内容没变不重渲染。
-							if (this.editor.renderedFrom !== this.editor.text) {
-								this.editor.html = markdown_to_html(this.editor.text);
-								this.editor.renderedFrom = this.editor.text;
+						/** 手指移动超过容差就取消长按（列表要能滑）。 */
+						pressMove(event) {
+							if (this.pressTimer === null || !this.pressAt) return;
+							if (
+								Math.abs(event.clientX - this.pressAt.x) > LONG_PRESS_MOVE ||
+								Math.abs(event.clientY - this.pressAt.y) > LONG_PRESS_MOVE
+							) {
+								this.pressUp();
 							}
-							await this.$nextTick();
-							await this.renderMermaid(this.$refs.editorPreview);
-						} catch (err) {
-							// 出错退回编辑态，否则提示会显示在看不见的地方。
+						},
+
+						pressUp() {
+							this.clearPressTimer();
+							this.pressAt = null;
+						},
+
+						clearPressTimer() {
+							if (this.pressTimer !== null) {
+								clearTimeout(this.pressTimer);
+								this.pressTimer = null;
+							}
+						},
+
+						/** 吃掉长按之后必然到来的那个 click，在捕获阶段拦。 */
+						swallowPressClick(event) {
+							if (!this.pressFired) return;
+							this.pressFired = false;
+							event.preventDefault();
+							event.stopPropagation();
+						},
+
+						/** 每个关闭 / 切换面板的路径都显式提交改名（@blur 靠不住，见下）。 */
+						closeAllPanels() {
+							this.commitRename();
+							this.sheet = null;
+							this.confirmTarget = null;
+							this.newMenu = false;
+							this.folder.open = false;
+							this.uploadConflicts = null;
+						},
+
+						async load() {
+							this.loading = true;
+							this.error = '';
+							try {
+								const response = await fetch(location.pathname + '?format=json', {
+									credentials: 'include',
+									headers: { Accept: 'application/json' },
+								});
+								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+								const data = await response.json();
+								this.entries = data.entries;
+								this.truncated = data.truncated === true;
+							} catch (err) {
+								this.error = this.t('loadFailed', { msg: err.message });
+							} finally {
+								this.loading = false;
+							}
+						},
+
+						get crumbs() {
+							const parts = decodeURIComponent(location.pathname).split('/').filter(Boolean);
+							const trail = [{ label: this.t('rootDir'), href: '/' }];
+							let path = '';
+							for (const part of parts) {
+								path += '/' + part;
+								trail.push({ label: part, href: path + '/' });
+							}
+							return trail;
+						},
+
+						/** 把面包屑滚到末尾。 */
+						scrollCrumbs() {
+							this.$nextTick(() => {
+								const el = this.$refs.crumbs;
+								if (el) el.scrollLeft = el.scrollWidth;
+							});
+						},
+
+						iconFor(entry) {
+							if (entry.isDir) return 'folder';
+							if (entry.kind) return entry.kind;
+							return /\.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name) ? 'archive' : 'file';
+						},
+
+						metaFor(entry) {
+							if (entry.isDir) return this.t('dirLabel');
+							return this.formatSize(entry.size) + ' · ' + this.formatDate(entry.modified);
+						},
+
+						/** 只有文本类文件可在网页里编辑。 */
+						canEdit(entry) {
+							return !!entry && (entry.kind === 'text' || entry.kind === 'markdown');
+						},
+
+						/**
+						 * 常见办公文档可用在线 ONLYOFFICE 打开。
+						 *
+						 * 扩展名清单由服务端给（adapter 放行的那份），前端不维护第二份。
+						 */
+						canOpenInOnlyOffice(entry) {
+							if (!entry || entry.isDir || !this.onlyoffice) return false;
+							const dot = entry.name.lastIndexOf('.');
+							const extension = dot === -1 ? '' : entry.name.slice(dot + 1).toLowerCase();
+							return this.onlyoffice.extensions.indexOf(extension) !== -1;
+						},
+
+						/**
+						 * 用在线 ONLYOFFICE 打开：先要一份带签名短链的会话，再打开编辑器页面。
+						 */
+						async openInOnlyOffice(entry) {
+							await this.settleRename();
+							this.sheet = null;
+							buzz('tap');
+							try {
+								// href 已编码，服务端会再解一次，这里必须先 decode。
+								const query = new URLSearchParams({ path: decodeURIComponent(entry.href) });
+								const response = await fetch('/onlyoffice/session?' + query, {
+									credentials: 'include',
+								});
+								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+								const session = await response.json();
+								const editor_query = new URLSearchParams({
+									url: session.url,
+									fileType: session.fileType,
+									fileName: session.title,
+								});
+								const target = this.onlyoffice.editorUrl + '?' + editor_query;
+								// 新页面打开编辑器。注意不能带 noopener：设了它 window.open 按规范返回 null，
+								// 会误判成弹窗被拦、每次都退回当前页跳转。改为打开后再断开 opener。
+								const popup = window.open(target, '_blank');
+								if (popup) popup.opener = null;
+								// 被弹窗拦截时（iOS Safari）退回当前页。
+								else location.href = target;
+							} catch (err) {
+								this.notify(this.t('onlyofficeFailed', { msg: err.message }), 'error');
+							}
+						},
+
+						formatSize(bytes) {
+							const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+							let value = bytes;
+							let unit = 0;
+							while (value >= 1024 && unit < units.length - 1) {
+								value = value / 1024;
+								unit++;
+							}
+							return (unit === 0 ? value : value.toFixed(1)) + ' ' + units[unit];
+						},
+
+						formatDate(iso) {
+							const date = new Date(iso);
+							const pad = (n) => String(n).padStart(2, '0');
+							return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+						},
+
+						pickerRef() {
+							return this.$refs.picker;
+						},
+
+						open(entry) {
+							if (entry.isDir) {
+								location.href = entry.href;
+								return;
+							}
+							if (entry.kind) this.preview(entry);
+							else location.href = entry.href;
+						},
+
+						/** 从预览层进入编辑（先关预览）。 */
+						async editFromViewer() {
+							const entry = this.viewer.entry;
+							if (!entry) return;
+							this.closeViewer();
+							await this.editExisting(entry);
+						},
+
+						async preview(entry) {
+							// 先等改名落盘，否则会去取旧路径。
+							await this.settleRename();
+							buzz('tap');
+							this.sheet = null;
+							this.viewer = {
+								open: true,
+								entry,
+								kind: entry.kind,
+								title: entry.name,
+								href: entry.href,
+								status: 'loading',
+								text: '',
+								html: '',
+								error: '',
+							};
+
+							if (entry.kind !== 'text' && entry.kind !== 'markdown') {
+								this.viewer.status = 'ready';
+								return;
+							}
+
+							try {
+								const response = await fetch(entry.href, { credentials: 'include' });
+								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+								const text = await response.text();
+								if (entry.kind === 'markdown') {
+									await this.loadMarkdown();
+									this.viewer.html = markdown_to_html(text);
+									this.viewer.status = 'ready';
+									// 等 HTML 进 DOM 再画 mermaid。
+									await this.$nextTick();
+									await this.renderMermaid(this.$refs.viewerBody);
+								} else {
+									this.viewer.text = text;
+									this.viewer.status = 'ready';
+								}
+							} catch (err) {
+								this.viewer.status = 'error';
+								this.viewer.error = this.t('previewFailed', { msg: err.message });
+							}
+						},
+
+						loadScript(src) {
+							if (document.querySelector('script[src="' + src + '"]')) return Promise.resolve();
+							return new Promise((resolve, reject) => {
+								const script = document.createElement('script');
+								script.src = src;
+								script.onload = resolve;
+								script.onerror = reject;
+								document.head.appendChild(script);
+							});
+						},
+
+						async loadMarkdown() {
+							await this.loadScript('https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js');
+							await this.loadScript('https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js');
+						},
+
+						// markdown-it 把 mermaid 渲染成 <pre><code>，先换成节点再绘制；root 是包含它的容器。
+						async renderMermaid(root) {
+							if (!window.mermaid || !root) return;
+							root.querySelectorAll('code.language-mermaid').forEach((block) => {
+								const container = document.createElement('div');
+								container.className = 'mermaid';
+								container.textContent = block.textContent;
+								block.parentNode.replaceWith(container);
+							});
+							const nodes = root.querySelectorAll('.mermaid:not([data-processed])');
+							if (nodes.length === 0) return;
+							window.mermaid.initialize({ startOnLoad: false });
+							await window.mermaid.run({ nodes });
+						},
+
+						closeViewer() {
+							this.viewer.open = false;
+							this.viewer.entry = null;
+							this.viewer.href = '';
+							this.viewer.html = '';
+							this.viewer.text = '';
+						},
+
+						/** 新建文本文件时的默认名：在当前目录的条目里挑一个不冲突的（数据已在手上，无需额外请求）。 */
+						default_new_name() {
+							const taken = new Set(this.entries.map((entry) => entry.name));
+							if (!taken.has('untitled.txt')) return 'untitled.txt';
+							for (let index = 2; index < 1000; index++) {
+								const candidate = 'untitled-' + index + '.txt';
+								if (!taken.has(candidate)) return candidate;
+							}
+							return 'untitled.txt';
+						},
+
+						openNewMenu() {
+							buzz('tap');
+							this.newMenu = true;
+						},
+
+						openFolder() {
+							buzz('tap');
+							this.newMenu = false;
+							this.sheet = null;
+							this.folder = { open: true, name: this.default_folder_name(), busy: false, error: '' };
+						},
+
+						/** 同 default_new_name()；用英文是因为目录名会进 URL。 */
+						default_folder_name() {
+							const taken = new Set(this.entries.map((entry) => entry.name));
+							if (!taken.has('new-folder')) return 'new-folder';
+							for (let index = 2; index < 1000; index++) {
+								const candidate = 'new-folder-' + index;
+								if (!taken.has(candidate)) return candidate;
+							}
+							return 'new-folder';
+						},
+
+						/** MKCOL 建目录；405 / 409 如实报错。 */
+						async createFolder() {
+							const name = this.folder.name.trim();
+							const invalid = this.check_name(name, this.t('folderName'));
+							if (invalid) {
+								this.folder.error = invalid;
+								return;
+							}
+
+							this.folder.busy = true;
+							this.folder.error = '';
+							try {
+								// 尾部斜杠是集合的规范写法。
+								const response = await fetch(location.pathname + encodeURIComponent(name) + '/', {
+									method: 'MKCOL',
+									credentials: 'include',
+								});
+								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+								this.folder.open = false;
+								this.notify(this.t('folderCreated', { name }), 'done');
+								await this.load();
+							} catch (err) {
+								this.folder.error = this.t('createFailed', { msg: err.message });
+								buzz('error');
+							} finally {
+								this.folder.busy = false;
+							}
+						},
+
+						/** 点标题进入改名（仅文件）。 */
+						enterRename() {
+							if (!this.sheet || this.sheet.isDir) return;
+							this.rename = {
+								active: true,
+								original: this.sheet.name,
+								draft: this.sheet.name,
+								error: '',
+								pending: null,
+							};
+							this.$nextTick(() => {
+								const input = document.getElementById('rename-input');
+								if (!input) return;
+								input.focus();
+								// 只选中主文件名，扩展名留着。
+								const dot = this.rename.draft.lastIndexOf('.');
+								input.setSelectionRange(0, dot > 0 ? dot : this.rename.draft.length);
+							});
+						},
+
+						cancelRename() {
+							this.rename = { active: false, original: '', draft: '', error: '', pending: null };
+						},
+
+						/** 提交改名（= 同目录 MOVE）；返回 pending Promise（无待提交时为 null）。 */
+						commitRename() {
+							if (!this.rename.active) return null;
+							const name = this.rename.draft.trim();
+							if (name === this.rename.original) {
+								this.cancelRename();
+								return null;
+							}
+							const invalid = this.check_name(name, this.t('fileName'));
+							if (invalid) {
+								// 非法名留在编辑态。
+								this.rename.error = invalid;
+								return null;
+							}
+							const entry = this.sheet;
+							if (!entry) {
+								this.cancelRename();
+								return null;
+							}
+							// 先退出编辑态，避免同一个改名被重复提交。
+							this.rename.active = false;
+							this.rename.error = '';
+							this.rename.pending = this.renameEntry(entry, name);
+							return this.rename.pending;
+						},
+
+						/** 等挂起的改名落盘（读 href 前必须先过这一关）。 */
+						async settleRename() {
+							const pending = this.commitRename();
+							if (pending) await pending;
+						},
+
+						async renameEntry(entry, name) {
+							const old_href = entry.href;
+							const new_href = location.pathname + encodeURIComponent(name);
+							try {
+								const response = await fetch(old_href, {
+									method: 'MOVE',
+									credentials: 'include',
+									headers: {
+										// Destination 必须是绝对 URL，host 要和请求完全一致，否则服务端回 502。
+										Destination: location.origin + new_href,
+										// 必须显式 F：MOVE 缺省 T 会先删掉同名目标（目标是目录时递归删光）。
+										Overwrite: 'F',
+									},
+								});
+								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+								this.applyRename(entry, old_href, name, new_href);
+								this.notify(this.t('renamed', { name }), 'done');
+							} catch (err) {
+								this.notify(this.t('renameFailed', { msg: err.message }), 'error');
+							} finally {
+								this.rename.pending = null;
+							}
+							await this.load();
+						},
+
+						/** 改名成功后就地更新 sheet / viewer / editor 持有的引用。 */
+						applyRename(entry, old_href, name, new_href) {
+							entry.name = name;
+							entry.href = new_href; // entry 就是 this.sheet，标题与动作随之更新
+							if (this.viewer.entry === entry) {
+								this.viewer.title = name;
+								this.viewer.href = new_href;
+							}
+							if (this.editor.href === old_href) {
+								this.editor.href = new_href;
+								this.editor.name = name;
+							}
+						},
+
+						/** 下载（目录则打包）。 */
+						async downloadEntry(entry, event) {
+							event.preventDefault();
+							await this.settleRename();
+							if (entry.isDir) return this.zipFolder(entry);
+							buzz('tap');
+							const link = document.createElement('a');
+							link.href = entry.href;
+							link.download = entry.name;
+							document.body.appendChild(link);
+							link.click();
+							link.remove();
+						},
+
+						/** 目录打包下载（实现在 src/archive.client.js）。 */
+						async zipFolder(entry) {
+							await this.runArchive(this.t('archiveCompress'), async (signal, onProgress) => {
+								const result = await window.R2Archive.downloadFolderAsZip(entry, { onProgress, signal });
+								this.notify(this.t('compressed', { count: result.files }), 'done');
+							});
+						},
+
+						/** 只有 zip 能解压。 */
+						canExtract(entry) {
+							return !!entry && !entry.isDir && /\.zip$/i.test(entry.name);
+						},
+
+						canCompress(entry) {
+							return !!entry && entry.isDir;
+						},
+
+						/** 在当前目录生成真实的 <目录名>.zip 对象，不下载。 */
+						async compressEntry(entry) {
+							await this.settleRename();
+							this.sheet = null;
+							await this.runArchive(this.t('archiveCompress'), async (signal, onProgress) => {
+								const result = await window.R2Archive.storeFolderAsZip(entry, { onProgress, signal });
+								this.notify(this.t('zipCreated', { name: entry.name, size: this.formatSize(result.bytes) }), 'done');
+								await this.load();
+							});
+						},
+
+						/** 解压到同名目录（实现在 src/archive.client.js）。 */
+						async extractEntry(entry) {
+							await this.settleRename();
+							this.sheet = null;
+							await this.runArchive(this.t('archiveExtract'), async (signal, onProgress) => {
+								const result = await window.R2Archive.extractZipToFolder(entry, { onProgress, signal });
+								this.notify(
+									this.t('extracted', { count: result.files, dir: entry.name.replace(/\.zip$/i, '') }),
+									'done',
+								);
+								await this.load();
+							});
+						},
+
+						/** 压缩 / 解压的公共外壳：挡重入、把进度接到提示条、结束收掉 AbortController。 */
+						async runArchive(label, task) {
+							if (this.archiveAbort) return;
+							const controller = new AbortController();
+							this.archiveAbort = controller;
+							buzz('tap');
+							try {
+								await task(controller.signal, (text) => this.notifySticky(text));
+							} catch (err) {
+								// 取消不算失败，原样转出模块的说明。
+								this.notify(
+									controller.signal.aborted ? err.message : this.t('archiveFailed', { label, msg: err.message }),
+									controller.signal.aborted ? 'tap' : 'error',
+								);
+							} finally {
+								this.archiveAbort = null;
+							}
+						},
+
+						cancelArchive() {
+							if (this.archiveAbort) this.archiveAbort.abort();
+						},
+
+						check_name(name, label) {
+							if (!name) return this.t('nameRequired', { label });
+							if (name.includes('/') || name.includes('\\')) return this.t('nameNoSlash', { label });
+							return '';
+						},
+
+						openEditor(entry) {
+							buzz('tap');
+							this.newMenu = false;
+							this.sheet = null;
+							this.editor = {
+								open: true,
+								href: entry ? entry.href : '',
+								name: entry ? entry.name : this.default_new_name(),
+								text: entry ? entry.text : '',
+								// 沿用原 Content-Type，不要顺手改掉元数据。
+								contentType: (entry && entry.contentType) || null,
+								dirty: false,
+								conflict: false,
+								busy: false,
+								error: '',
+								confirmDiscard: false,
+								preview: false,
+								html: '',
+								renderedFrom: '',
+							};
+						},
+
+						async editExisting(entry) {
+							await this.settleRename();
+							this.sheet = null;
+							try {
+								const response = await fetch(entry.href, { credentials: 'include' });
+								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+								this.openEditor({
+									href: entry.href,
+									name: entry.name,
+									text: await response.text(),
+									contentType: entry.contentType,
+								});
+							} catch (err) {
+								this.notify(this.t('openFailed', { msg: err.message }), 'error');
+							}
+						},
+
+						requestCloseEditor() {
+							// 有未保存内容先确认一次。
+							if (this.editor.confirmDiscard) return this.discardEditor();
+							if (this.editor.dirty && this.editor.text) this.editor.confirmDiscard = true;
+							else this.discardEditor();
+						},
+
+						discardEditor() {
+							this.editor.open = false;
+							this.editor.confirmDiscard = false;
+							this.editor.text = '';
+							this.editor.dirty = false;
+							this.editor.conflict = false;
+							// 只有真正关掉编辑器才丢掉已渲染内容（编辑 ⇄ 查看之间不丢）。
 							this.editor.preview = false;
-							this.editor.error = this.t('previewFailed', { msg: err.message });
-						}
-					},
+							this.editor.html = '';
+							this.editor.renderedFrom = '';
+						},
 
-					async saveEditor() {
-						const raw = this.editor.name.trim();
-						const invalid = this.check_name(raw, this.t('fileName'));
-						if (invalid) {
-							this.editor.error = invalid;
-							return;
-						}
-						// 没写扩展名时补 .txt。
-						const name = raw.includes('.') ? raw : raw + '.txt';
-						const href = this.editor.href || location.pathname + encodeURIComponent(name);
+						/** 「查看」只对 markdown 有意义。 */
+						canPreviewEditor() {
+							const name = this.editor.name || '';
+							const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+							return MARKDOWN_EXTENSIONS.includes(ext);
+						},
 
-						this.editor.busy = true;
-						this.editor.error = '';
-						try {
-							// 新建时先探重名；conflict 在文件名变化时被重置（见 @input）。
-							if (!this.editor.href && !this.editor.conflict) {
-								const probe = await fetch(href, { method: 'HEAD', credentials: 'include' });
-								if (probe.ok) {
-									this.editor.conflict = true;
-									this.editor.name = name;
+						async toggleEditorPreview() {
+							if (this.editor.preview) {
+								this.editor.preview = false;
+								return;
+							}
+							// mermaid 需要节点先进布局。
+							this.editor.preview = true;
+							this.editor.error = '';
+							try {
+								await this.loadMarkdown();
+								// 内容没变不重渲染。
+								if (this.editor.renderedFrom !== this.editor.text) {
+									this.editor.html = markdown_to_html(this.editor.text);
+									this.editor.renderedFrom = this.editor.text;
+								}
+								await this.$nextTick();
+								await this.renderMermaid(this.$refs.editorPreview);
+							} catch (err) {
+								// 出错退回编辑态，否则提示会显示在看不见的地方。
+								this.editor.preview = false;
+								this.editor.error = this.t('previewFailed', { msg: err.message });
+							}
+						},
+
+						async saveEditor() {
+							const raw = this.editor.name.trim();
+							const invalid = this.check_name(raw, this.t('fileName'));
+							if (invalid) {
+								this.editor.error = invalid;
+								return;
+							}
+							// 没写扩展名时补 .txt。
+							const name = raw.includes('.') ? raw : raw + '.txt';
+							const href = this.editor.href || location.pathname + encodeURIComponent(name);
+
+							this.editor.busy = true;
+							this.editor.error = '';
+							try {
+								// 新建时先探重名；conflict 在文件名变化时被重置（见 @input）。
+								if (!this.editor.href && !this.editor.conflict) {
+									const probe = await fetch(href, { method: 'HEAD', credentials: 'include' });
+									if (probe.ok) {
+										this.editor.conflict = true;
+										this.editor.name = name;
+										return;
+									}
+								}
+								const response = await fetch(href, {
+									method: 'PUT',
+									body: this.editor.text,
+									credentials: 'include',
+									headers: { 'Content-Type': this.editor.contentType || 'text/plain; charset=utf-8' },
+								});
+								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+								this.discardEditor();
+								this.notify(this.t('saved', { name }), 'done');
+								await this.load();
+							} catch (err) {
+								this.editor.error = this.t('saveFailed', { msg: err.message });
+								buzz('error');
+							} finally {
+								this.editor.busy = false;
+							}
+						},
+
+						async copyLink(entry) {
+							if (!entry) return;
+							await this.settleRename();
+							const url = location.origin + entry.href;
+							this.sheet = null;
+							try {
+								await navigator.clipboard.writeText(url);
+								this.notify(this.t('linkCopied'), 'tap');
+							} catch {
+								this.notify(url);
+							}
+						},
+
+						askDelete(entry) {
+							if (!entry) return;
+							buzz('tap');
+							this.sheet = null;
+							this.confirmTarget = entry;
+						},
+
+						async remove() {
+							const target = this.confirmTarget;
+							this.busy = true;
+							try {
+								const response = await fetch(target.href, { method: 'DELETE', credentials: 'include' });
+								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+								this.confirmTarget = null;
+								// 删的正好是当前预览的文件时，一并关掉预览层。
+								if (this.viewer.entry && this.viewer.entry.href === target.href) this.closeViewer();
+								this.notify(this.t('deleted', { name: target.name }), 'done');
+								await this.load();
+							} catch (err) {
+								this.notify(this.t('deleteFailed', { msg: err.message }), 'error');
+							} finally {
+								this.busy = false;
+							}
+						},
+
+						onPick(event) {
+							const files = Array.from(event.target.files || []);
+							event.target.value = '';
+							this.upload(files);
+						},
+
+						onDrop(event) {
+							this.dragging = false;
+							this.upload(Array.from(event.dataTransfer.files || []));
+						},
+
+						async upload(files, options) {
+							if (files.length === 0) return;
+							// 批量上传先进定宽态。
+							if (files.length > 1) this.toastProgress = true;
+							// 默认不允许覆盖：交给服务端用 If-None-Match 原子判定，避免探测与写入之间的竞态。
+							const overwrite = !!(options && options.overwrite);
+							this.busy = true;
+							const conflicts = [];
+							let done = 0;
+							for (const file of files) {
+								this.notify(
+									this.t('uploading', { current: done + conflicts.length + 1, total: files.length, name: file.name }),
+								);
+								try {
+									const response = await fetch(location.pathname + encodeURIComponent(file.name), {
+										method: 'PUT',
+										body: file,
+										credentials: 'include',
+										headers: overwrite ? undefined : { 'If-None-Match': '*' },
+									});
+									if (!overwrite && response.status === 412) {
+										conflicts.push(file);
+										continue;
+									}
+									if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
+									done++;
+								} catch (err) {
+									this.busy = false;
+									this.notify(this.t('uploadFailed', { name: file.name, msg: err.message }), 'error');
+									await this.load();
 									return;
 								}
 							}
-							const response = await fetch(href, {
-								method: 'PUT',
-								body: this.editor.text,
-								credentials: 'include',
-								headers: { 'Content-Type': this.editor.contentType || 'text/plain; charset=utf-8' },
-							});
-							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-							this.discardEditor();
-							this.notify(this.t('saved', { name }), 'done');
-							await this.load();
-						} catch (err) {
-							this.editor.error = this.t('saveFailed', { msg: err.message });
-							buzz('error');
-						} finally {
-							this.editor.busy = false;
-						}
-					},
-
-					async copyLink(entry) {
-						if (!entry) return;
-						await this.settleRename();
-						const url = location.origin + entry.href;
-						this.sheet = null;
-						try {
-							await navigator.clipboard.writeText(url);
-							this.notify(this.t('linkCopied'), 'tap');
-						} catch {
-							this.notify(url);
-						}
-					},
-
-					askDelete(entry) {
-						if (!entry) return;
-						buzz('tap');
-						this.sheet = null;
-						this.confirmTarget = entry;
-					},
-
-					async remove() {
-						const target = this.confirmTarget;
-						this.busy = true;
-						try {
-							const response = await fetch(target.href, { method: 'DELETE', credentials: 'include' });
-							if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-							this.confirmTarget = null;
-							// 删的正好是当前预览的文件时，一并关掉预览层。
-							if (this.viewer.entry && this.viewer.entry.href === target.href) this.closeViewer();
-							this.notify(this.t('deleted', { name: target.name }), 'done');
-							await this.load();
-						} catch (err) {
-							this.notify(this.t('deleteFailed', { msg: err.message }), 'error');
-						} finally {
 							this.busy = false;
-						}
-					},
 
-					onPick(event) {
-						const files = Array.from(event.target.files || []);
-						event.target.value = '';
-						this.upload(files);
-					},
-
-					onDrop(event) {
-						this.dragging = false;
-						this.upload(Array.from(event.dataTransfer.files || []));
-					},
-
-					async upload(files, options) {
-						if (files.length === 0) return;
-						// 批量上传先进定宽态。
-						if (files.length > 1) this.toastProgress = true;
-						// 默认不允许覆盖：交给服务端用 If-None-Match 原子判定，避免探测与写入之间的竞态。
-						const overwrite = !!(options && options.overwrite);
-						this.busy = true;
-						const conflicts = [];
-						let done = 0;
-						for (const file of files) {
-							this.notify(
-								this.t('uploading', { current: done + conflicts.length + 1, total: files.length, name: file.name }),
-							);
-							try {
-								const response = await fetch(location.pathname + encodeURIComponent(file.name), {
-									method: 'PUT',
-									body: file,
-									credentials: 'include',
-									headers: overwrite ? undefined : { 'If-None-Match': '*' },
-								});
-								if (!overwrite && response.status === 412) {
-									conflicts.push(file);
+							// 同名目录直接跳过（标记对象被文件顶掉后，目录里的内容会不可见）。
+							//
+							// 列表可能过期，列表里没有的再向服务器确认一次。
+							const dirNames = new Set(this.entries.filter((entry) => entry.isDir).map((entry) => entry.name));
+							const blocked = [];
+							const pending = [];
+							for (const file of conflicts) {
+								if (dirNames.has(file.name)) {
+									blocked.push(file);
 									continue;
 								}
-								if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
-								done++;
-							} catch (err) {
-								this.busy = false;
-								this.notify(this.t('uploadFailed', { name: file.name, msg: err.message }), 'error');
+								let isDir = false;
+								try {
+									const probe = await fetch(location.pathname + encodeURIComponent(file.name), {
+										method: 'PROPFIND',
+										credentials: 'include',
+										headers: { Depth: '0', 'Content-Type': 'application/xml' },
+										body: '<?xml version="1.0"?><propfind xmlns="DAV:"><prop><resourcetype/></prop></propfind>',
+									});
+									isDir = probe.ok && (await probe.text()).includes('<collection />');
+								} catch {
+									// 探测失败当作文件处理。
+								}
+								(isDir ? blocked : pending).push(file);
+							}
+
+							if (pending.length > 0) {
+								this.uploadConflicts = pending;
+								buzz('tap');
+								if (done > 0) this.notify(this.t('uploadDone', { done }), 'done');
 								await this.load();
 								return;
 							}
-						}
-						this.busy = false;
 
-						// 同名目录直接跳过（标记对象被文件顶掉后，目录里的内容会不可见）。
-						//
-						// 列表可能过期，列表里没有的再向服务器确认一次。
-						const dirNames = new Set(this.entries.filter((entry) => entry.isDir).map((entry) => entry.name));
-						const blocked = [];
-						const pending = [];
-						for (const file of conflicts) {
-							if (dirNames.has(file.name)) {
-								blocked.push(file);
-								continue;
-							}
-							let isDir = false;
-							try {
-								const probe = await fetch(location.pathname + encodeURIComponent(file.name), {
-									method: 'PROPFIND',
-									credentials: 'include',
-									headers: { Depth: '0', 'Content-Type': 'application/xml' },
-									body: '<?xml version="1.0"?><propfind xmlns="DAV:"><prop><resourcetype/></prop></propfind>',
-								});
-								isDir = probe.ok && (await probe.text()).includes('<collection />');
-							} catch {
-								// 探测失败当作文件处理。
-							}
-							(isDir ? blocked : pending).push(file);
-						}
-
-						if (pending.length > 0) {
-							this.uploadConflicts = pending;
-							buzz('tap');
-							if (done > 0) this.notify(this.t('uploadDone', { done }), 'done');
-							await this.load();
-							return;
-						}
-
-						// 只留一条提示：toast 只有一个槽位。
-						const parts = [];
-						if (done > 0) parts.push(this.t('uploadDone', { done }));
-						if (blocked.length > 0)
-							parts.push(
-								this.t('uploadSkippedDirs', { list: blocked.map((file) => file.name).join(this.t('listSeparator')) }),
+							// 只留一条提示：toast 只有一个槽位。
+							const parts = [];
+							if (done > 0) parts.push(this.t('uploadDone', { done }));
+							if (blocked.length > 0)
+								parts.push(
+									this.t('uploadSkippedDirs', { list: blocked.map((file) => file.name).join(this.t('listSeparator')) }),
+								);
+							this.notify(
+								parts.length > 0 ? parts.join(this.t('listSeparator')) : this.t('uploadNone'),
+								parts.length > 0 ? 'done' : 'error',
 							);
-						this.notify(
-							parts.length > 0 ? parts.join(this.t('listSeparator')) : this.t('uploadNone'),
-							parts.length > 0 ? 'done' : 'error',
-						);
-						await this.load();
-					},
+							await this.load();
+						},
 
-					async confirmOverwriteUpload() {
-						const files = this.uploadConflicts || [];
-						this.uploadConflicts = null;
-						await this.upload(files, { overwrite: true });
-					},
+						async confirmOverwriteUpload() {
+							const files = this.uploadConflicts || [];
+							this.uploadConflicts = null;
+							await this.upload(files, { overwrite: true });
+						},
 
-					/** 常驻提示：给长操作推进度（不用 notify()，它会 2.4s 后自动消失）。 */
-					notifySticky(message) {
-						clearTimeout(this.toastTimer);
-						this.toastProgress = true;
-						this.toast = message;
-					},
+						/** 常驻提示：给长操作推进度（不用 notify()，它会 2.4s 后自动消失）。 */
+						notifySticky(message) {
+							clearTimeout(this.toastTimer);
+							this.toastProgress = true;
+							this.toast = message;
+						},
 
-					notify(message, kind) {
-						if (kind) buzz(kind);
-						this.toast = message;
-						clearTimeout(this.toastTimer);
-						this.toastTimer = setTimeout(() => {
-							this.toast = '';
-							// 隐藏后再退出定宽态（可见时改宽度会跳）。
-							this.toastProgress = false;
-						}, 2400);
-					},
+						notify(message, kind) {
+							if (kind) buzz(kind);
+							this.toast = message;
+							clearTimeout(this.toastTimer);
+							this.toastTimer = setTimeout(() => {
+								this.toast = '';
+								// 隐藏后再退出定宽态（可见时改宽度会跳）。
+								this.toastProgress = false;
+							}, 2400);
+						},
+					};
 				};
-			};
+			})();
 		</script>
 		<script defer src="/_app/archive.client.js"></script>
 		<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
