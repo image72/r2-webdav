@@ -32,6 +32,15 @@ const LOCALES: Record<string, unknown> = { en, zh };
 const LOCALE_ASSET_PREFIX = '/_app/locales/';
 const LANG_CODES = ['en', 'zh'];
 
+function handle_assets(request: Request, file: string, contentType = 'text/javascript; charset=utf-8'): Response {
+	return new Response(request.method === 'HEAD' ? null : file, {
+		status: 200,
+		headers: {
+			'Content-Type': contentType,
+			'Cache-Control': 'no-cache',
+		},
+	});
+}
 /**
  * 分发客户端静态资源；不是资源请求就返回 null，交给 WebDAV 那层。
  *
@@ -43,36 +52,16 @@ export function handle_asset_request(request: Request): Response | null {
 	if (request.method !== 'GET' && request.method !== 'HEAD') return null;
 	const pathname = new URL(request.url).pathname;
 	if (pathname === ARCHIVE_ASSET_PATH) {
-		return new Response(request.method === 'HEAD' ? null : ARCHIVE_JS, {
-			status: 200,
-			headers: {
-				'Content-Type': 'text/javascript; charset=utf-8',
-				// no-cache 而不是长缓存：改了文件刷新就生效，不用去记版本号。
-				// 将来真要长缓存，把版本写进 URL 比写在这里稳。
-				'Cache-Control': 'no-cache',
-			},
-		});
+		return handle_assets(request, ARCHIVE_JS);
 	}
 	if (pathname === EDITORS_ASSET_PATH) {
-		return new Response(request.method === 'HEAD' ? null : EDITORS_JS, {
-			status: 200,
-			headers: {
-				'Content-Type': 'text/javascript; charset=utf-8',
-				'Cache-Control': 'no-cache',
-			},
-		});
+		return handle_assets(request, EDITORS_JS);
 	}
 	if (pathname.startsWith(LOCALE_ASSET_PREFIX)) {
 		const code = pathname.slice(LOCALE_ASSET_PREFIX.length).replace(/\.json$/, '');
 		const pack = LOCALES[code];
 		if (pack === undefined) return null;
-		return new Response(request.method === 'HEAD' ? null : JSON.stringify(pack), {
-			status: 200,
-			headers: {
-				'Content-Type': 'application/json; charset=utf-8',
-				'Cache-Control': 'no-cache',
-			},
-		});
+		return handle_assets(request, JSON.stringify(pack), 'application/json; charset=utf-8');
 	}
 	return null;
 }
