@@ -1279,25 +1279,7 @@
 						spellcheck="false"
 					/>
 					<p class="editor__error sheet__rename-error" x-show="rename.error" x-text="rename.error"></p>
-					<button
-						id="entry-preview-button"
-						class="sheet__item"
-						x-show="sheet?.kind"
-						@click="preview(sheet)"
-						aria-label="Preview"
-					>
-						<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span x-text="t('preview')"></span>
-					</button>
-					<button
-						id="entry-edit-button"
-						class="sheet__item"
-						x-show="canEdit(sheet)"
-						@click="editExisting(sheet)"
-						aria-label="Edit"
-					>
-						<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span x-text="t('edit')"></span>
-					</button>
-					<!-- 仅当服务端注入配置时出现（见 index.ts 的 ONLYOFFICE 接线）。三个编辑器入口聚在一组 -->
+					<!-- 三个编辑器入口聚在最前排：仅当服务端注入配置时出现（见 index.ts 接线） -->
 					<button
 						id="entry-onlyoffice-button"
 						class="sheet__item"
@@ -1328,6 +1310,24 @@
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg
 						><span x-text="t('openInPhotopea')"></span>
+					</button>
+					<button
+						id="entry-preview-button"
+						class="sheet__item"
+						x-show="sheet?.kind"
+						@click="preview(sheet)"
+						aria-label="Preview"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-eye"></use></svg><span x-text="t('preview')"></span>
+					</button>
+					<button
+						id="entry-edit-button"
+						class="sheet__item"
+						x-show="canEdit(sheet)"
+						@click="editExisting(sheet)"
+						aria-label="Edit"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-edit"></use></svg><span x-text="t('edit')"></span>
 					</button>
 					<button
 						id="entry-compress-button"
