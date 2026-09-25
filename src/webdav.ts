@@ -264,7 +264,12 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 		}
 		return new Response(null, {
 			status: conditional === 'not-modified' ? 304 : 412,
-			headers: { ETag: object.httpEtag, 'Last-Modified': object.uploaded.toUTCString() },
+			headers: {
+				ETag: object.httpEtag,
+				'Last-Modified': object.uploaded.toUTCString(),
+				// 304 要与 200 的缓存策略一致，否则浏览器不知道下次还要不要重验证
+				...(conditional === 'not-modified' ? { 'Cache-Control': 'no-cache' } : {}),
+			},
 		});
 	}
 
@@ -287,6 +292,11 @@ async function handle_get(request: Request, bucket: R2Bucket): Promise<Response>
 			'Accept-Ranges': 'bytes',
 			ETag: object.httpEtag,
 			'Last-Modified': object.uploaded.toUTCString(),
+			// 缓存策略默认 no-cache（每次用 ETag 重验证，未变走 304）：WebDAV 文件会被
+			// 本服务与外部编辑器随时覆盖，浏览器若按启发式缓存直接用本地副本，
+			// 预览/编辑后看到的就是旧内容（实测：PP 保存后预览图停在半小时前）。
+			// 对象自带 cacheControl 元数据时尊重它。
+			'Cache-Control': object.httpMetadata?.cacheControl ?? 'no-cache',
 			...(is_partial ? { 'Content-Range': `bytes ${rangeOffset}-${rangeEnd}/${object.size}` } : {}),
 			...(object.httpMetadata?.contentDisposition
 				? {
