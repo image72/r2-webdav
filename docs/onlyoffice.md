@@ -18,7 +18,7 @@
 于是 adapter 只做两件事，不碰 `webdav.ts` / `r2.ts` / `index.html`：
 
 ```
-office-website（浏览器）                     r2-webdav（Worker）
+office-website 编辑器页（浏览器，ONLYOFFICE_EDITOR_URL）   r2-webdav Worker
   │                                            │
   ├─ GET  /onlyoffice/session?path=/a.docx ───▶│  Basic 鉴权，换 token
   │◀── { url, saveUrl, key, fileType, … } ─────┤
@@ -146,6 +146,48 @@ hostname —— 生产环境下 Worker 自调用会被平台拦掉（实测返�
 - 只放行办公文档（docx/xlsx/pptx/odt/ods/odp/csv/txt/pdf/vsdx… 见 `src/onlyoffice.ts` 里的
   `EXTENSION_TYPES`），其它类型回 `415` 并列出支持的后缀。
 
+### doc 端点的请求与响应
+
+**打开**（office-website 编辑器页裸 fetch，无凭据）—— 响应体是**文件字节**，不是 JSON：
+
+```bash
+curl -s "$URL" -o /tmp/downloaded.docx   # GET：拉文件字节
+curl -sI "$URL"                          # HEAD：只看 Content-Length / ETag
+```
+
+| 状态 | 含义                                             |
+| ---- | ------------------------------------------------ |
+| 200  | 文件字节（`Content-Type` 按 token 内扩展名给定） |
+| 403  | token 无效 / 过期（读 TTL 1h）/ mode 不匹配      |
+| 404  | token 有效，但文件已删除                         |
+
+**保存**：消息体就是**编辑结果文件本身**（裸二进制，不是表单也不是 JSON），`PUT` 直发（`POST` 等价）：
+
+```bash
+curl -s -X PUT "$SAVEURL" \
+	--data-binary @/tmp/b.docx \
+	-H 'Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+```
+
+- `Content-Type` 可省：adapter 按 token 里的路径扩展名自行补。
+- 空消息体会被 `400` 拒绝（防把文件清成 0 字节）。
+
+成功响应（office-website 编辑器页要刷新 config 时，`key` / `etag` 就拿这里的新值）：
+
+```json
+{
+	"ok": true,
+	"path": "/oo/a.docx",
+	"status": 201,
+	"size": 9,
+	"etag": "\"…\"",
+	"key": "3f1c…"
+}
+```
+
+- `key` = sha256(path + etag)：内容一变就变。上游不给 ETag 时 `key` / `etag` 为 `null`。
+- 失败：`400` 空 body、`403` 写 token 过期（TTL 24h）、`502` 上游 PUT 失败（响应里带具体状态码）。
+
 ## 启用
 
 ```bash
@@ -162,8 +204,9 @@ npx wrangler secret put SIGNING_SECRET
 
 ## 文件列表里的入口
 
-再配一个编辑器页面地址，文件列表的操作面板里就会出现「用 ONLYOFFICE 打开」（只对
-办公文档显示，点了先要一份带签名短链的会话，再打开编辑器页面）：
+再配一个编辑器页面地址，**r2-webdav 页面**的文件操作面板里就会出现「用 ONLYOFFICE 打开」（只对
+办公文档显示，点了先向 r2-webdav Worker 要一份带签名短链的会话，再 window.open 打开
+office-website 编辑器页）：
 
 ```toml
 # wrangler.toml
@@ -185,21 +228,23 @@ BASE=http://127.0.0.1:8790 ; AUTH=test:test
 
 # 1. 先放一个文件进去（内容随便，这里只是造一个“已有文档”）
 printf 'PK\003\004 v1' > /tmp/a.docx
-curl -u $AUTH -T /tmp/a.docx $BASE/oo/a.docx
+curl -su $AUTH -T /tmp/a.docx $BASE/oo/a.docx
 
-# 2. 换 token
-curl -su $AUTH "$BASE/onlyoffice/session?path=/oo/a.docx"
-# → 取响应里的 url / saveUrl / key
+# 2. 换 token：响应是 JSON，用 node 抽出两个 URL（token 太长，别手抄）
+SESSION=$(curl -su $AUTH "$BASE/onlyoffice/session?path=/oo/a.docx")
+URL=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).url)' "$SESSION")
+SAVEURL=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).saveUrl)' "$SESSION")
 
-# 3. 打开（注意：不带 -u，模拟编辑器的裸 fetch）
-curl -s $URL | head -c 16
+# 3. 打开（注意：不带 -u，模拟编辑器的裸 fetch）—— 响应体 = 文件字节
+curl -s "$URL" | head -c 16 # → PK\003\004 v1
 
-# 4. 保存
+# 4. 保存：消息体 = 新文件本身，成功响应见上文「doc 端点的请求与响应」
 printf 'PK\003\004 v2' > /tmp/b.docx
-curl -s -X PUT --data-binary @/tmp/b.docx $SAVEURL
+curl -s -X PUT --data-binary @/tmp/b.docx "$SAVEURL"
+# → {"ok":true,"path":"/oo/a.docx","status":201,"size":9,"etag":"…","key":"…"}
 
 # 5. 核对真的写回去了
-curl -su $AUTH $BASE/oo/a.docx | head -c 16
+curl -su $AUTH $BASE/oo/a.docx | head -c 16 # → PK\003\004 v2
 ```
 
 ## 接入 office-website（页面侧）
