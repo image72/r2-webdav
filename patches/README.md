@@ -19,6 +19,7 @@ r2-webdav 依赖 [office-website](../../../office-website) 编辑器页接受 `?
 | ---- | ---- | ---- |
 | `a73cecc` | feat: save back to storage via saveUrl query param | `server.ts` / `page.tsx` / `_headers` |
 | `0894bf9` | fix: save-to-storage is authoritative, download only as fallback | `server.ts`（保存语义修正） |
+| `4ed7dfd` | fix: revert added _headers rules, keep upstream config as-is | `public/_headers`（撤掉新增规则；`/x2t-*` 与 upstream 原有 `/x2t-*` 通配叠加产生 `content-encoding: br, br`，导致 x2t 解压失败 → 打开报错、保存卡 Downloading document） |
 
 ### 涉及文件与「侵入面」
 
