@@ -28,8 +28,8 @@ ONLYOFFICE_EDITOR_URL = "https://office-website-7xv.pages.dev/editor"
 # External editor pages (top-level window.open, zero source modification, zero wrapper).
 # draw.io uses the opener-mode embed protocol; Photopea uses signed session + hash config
 # (needs SIGNING_SECRET configured for the save endpoint).
-# DRAWIO_EDITOR_URL = "https://drawio.image72.workers.dev/"
-# PHOTOPEA_EDITOR_URL = "https://photopea.image72.workers.dev/"
+DRAWIO_EDITOR_URL = "https://drawio.image72.workers.dev/"
+PHOTOPEA_EDITOR_URL = "https://photopea.image72.workers.dev/"
 
 # Optional. Online editor page for the "open in ONLYOFFICE" action; needs SIGNING_SECRET.
 # SIGNING_SECRET = "<oo-joint-test-secret>"
