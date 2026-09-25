@@ -249,13 +249,19 @@ curl -su $AUTH $BASE/oo/a.docx | head -c 16 # → PK\003\004 v2
 
 ## 接入 office-website（页面侧）
 
-1. 用 Basic 凭据调一次 `GET /onlyoffice/session?path=…`，拿到 `url / key / fileType / title`；
-2. 打开编辑器页：`…/editor?url=<url>&fileType=<fileType>&fileName=<title>`
-   —— 页面会把它交给 `server.openUrl()`，编辑器对 `url` 做裸 `fetch`；
-3. 保存：把 x2t 产出的 `Blob` `PUT` 到 `saveUrl`，例如
-   `fetch(saveUrl, { method: 'PUT', body: blob })`。
-   现在 `utils/editor/server.ts` 的 `downloadas` 分支是 `new Blob(...)` → `a.download`，
-   把最后那三行换成这个 PUT 即可（页面上的 `onSave` / `writeFile` 事件是另一个可选落点）。
+> 以下 1–3 已经在 office-website 里实现（`a73cecc` + `0894bf9`）；r2-webdav 侧
+> `openInOnlyOffice` 会自动在编辑器页 URL 上追加 `&saveUrl=…`。这里保留原始步骤
+> 作为接入其它宿主页面的参考。
+
+1. 用 Basic 凭据调一次 `GET /onlyoffice/session?path=…`，拿到 `url / key / fileType / title / saveUrl`；
+2. 打开编辑器页：`…/editor?url=<url>&saveUrl=<saveUrl>&fileType=<fileType>&fileName=<title>`
+   —— 页面把 `url` / `saveUrl` 一起交给 `server.openUrl()`，编辑器对 `url` 做裸 `fetch`；
+3. 保存语义（`utils/editor/server.ts` 的 `downloadas` 分支）：
+   - **带了 `saveUrl`**：转换结果 `PUT` 到 `saveUrl`（`fetch(saveUrl, { method: 'PUT', body: blob })`）
+     **即为保存**，不再触发本地下载；PUT 失败才退回本地下载兜底，错误通过
+     `server.getSaveError()` 暴露，页面在 `onSave` 事件里读取并提示。
+   - **没带 `saveUrl`**（upstream 默认场景，如 `?new=` 新建、纯前端打开）：行为不变，
+     转换结果走本地下载（`<a download>`）。
 
 跨域写在同源之外时会走 CORS 预检：`PUT` 本来就在 `Access-Control-Allow-Methods` 里，
 预检由 WebDAV 那层的 `OPTIONS` 回答，无需额外配置。
