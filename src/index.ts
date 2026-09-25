@@ -6,6 +6,7 @@
 
 import { SUPPORT_METHODS, dispatch_handler } from './webdav';
 import { handle_asset_request } from './ui';
+import { log_error, log_info, log_warn, token_hint } from './log';
 // ONLYOFFICE 适配层（可选，整块可下线）：搜 ONLYOFFICE 就能找到全部接线点。
 import { ONLYOFFICE_TOKEN_PREFIX, handle_onlyoffice_request, onlyoffice_page_config } from './onlyoffice';
 import type { WebdavTransport } from './onlyoffice';
@@ -87,8 +88,12 @@ async function handle_editors_request(request: Request, env: Env, webdav: Webdav
 		}
 		const secret = env.SIGNING_SECRET;
 		if (!secret) return json_response({ error: 'Not configured' }, 501);
-		const payload = await verify_save_token(secret, pathname.slice(EDITORS_SAVE_PREFIX.length));
+		const token = pathname.slice(EDITORS_SAVE_PREFIX.length);
+		const payload = await verify_save_token(secret, token);
 		if (payload === null) return json_response({ error: 'Invalid or expired token' }, 403);
+
+		// 打点：到达这里 = 写 token 已验证；后续按「解析 → PUT → HEAD」逐步留痕。
+		log_info('pp.save', { path: `/${payload.path}`, declared: request.headers.get('content-length') ?? '?' });
 
 		const contentType = request.headers.get('Content-Type') ?? '';
 		const body = await request.text();
@@ -97,23 +102,36 @@ async function handle_editors_request(request: Request, env: Env, webdav: Webdav
 			// version 0：p=<encodeURIComponent(JSON)>，versions[].data 是 base64
 			const params = new URLSearchParams(body);
 			const encoded = params.get('p');
-			if (encoded === null) return json_response({ error: 'Missing "p" field' }, 400);
+			if (encoded === null) {
+				log_warn('pp.save rejected', { reason: 'missing_p_field', tok: token_hint(token) });
+				return json_response({ error: 'Missing "p" field' }, 400);
+			}
 			let parsed: { versions?: Array<{ data?: string }> };
 			try {
 				parsed = JSON.parse(decodeURIComponent(encoded));
 			} catch {
+				log_warn('pp.save rejected', { reason: 'malformed_json', tok: token_hint(token) });
 				return json_response({ error: 'Malformed payload' }, 400);
 			}
 			const data = parsed.versions && parsed.versions[0] && parsed.versions[0].data;
-			if (typeof data !== 'string') return json_response({ error: 'Missing versions[0].data' }, 400);
+			if (typeof data !== 'string') {
+				log_warn('pp.save rejected', { reason: 'missing_versions_data', tok: token_hint(token) });
+				return json_response({ error: 'Missing versions[0].data' }, 400);
+			}
 			const decoded = base64_to_bytes(data);
-			if (decoded === null) return json_response({ error: 'Malformed payload (bad base64)' }, 400);
+			if (decoded === null) {
+				log_warn('pp.save rejected', { reason: 'bad_base64', tok: token_hint(token) });
+				return json_response({ error: 'Malformed payload (bad base64)' }, 400);
+			}
 			bytes = decoded;
 		} else {
 			// 兼容直发二进制（未来 PP 版本或自测用）
 			bytes = new Uint8Array(await request.arrayBuffer());
 		}
-		if (bytes.byteLength === 0) return json_response({ error: 'Refusing to write an empty body' }, 400);
+		if (bytes.byteLength === 0) {
+			log_warn('pp.save rejected', { reason: 'empty_body', tok: token_hint(token) });
+			return json_response({ error: 'Refusing to write an empty body' }, 400);
+		}
 
 		const ext = payload.path.slice(payload.path.lastIndexOf('.') + 1).toLowerCase();
 		const type = photopea_content_type(ext);
@@ -125,11 +143,17 @@ async function handle_editors_request(request: Request, env: Env, webdav: Webdav
 			}),
 		);
 		if (!put.ok) {
+			log_error('pp.save failed', { path: `/${payload.path}`, upstream: put.status });
 			return json_response({ error: `Upstream PUT failed (${put.status})` }, 502);
 		}
 		const head = await webdav(
 			new Request(`${new URL(request.url).origin}/${encode_path(payload.path)}`, { method: 'HEAD' }),
 		);
+		log_info('pp.save done', {
+			path: `/${payload.path}`,
+			bytes: bytes.byteLength,
+			etag: head.headers.get('etag') ?? 'none',
+		});
 		return json_response({
 			ok: true,
 			newSource: payload.path,
@@ -148,7 +172,13 @@ async function handle_editors_request(request: Request, env: Env, webdav: Webdav
 		const head = await webdav(
 			new Request(`${new URL(request.url).origin}/${encode_path(payload.path)}`, { method: 'HEAD' }),
 		);
-		if (head.status === 404) return json_response({ error: 'Not found' }, 404);
+		if (head.status === 404) {
+			log_warn('pp.read miss', {
+				path: `/${payload.path}`,
+				tok: token_hint(pathname.slice(pathname.lastIndexOf('/') + 1)),
+			});
+			return json_response({ error: 'Not found' }, 404);
+		}
 		const type =
 			head.headers.get('content-type') ??
 			photopea_content_type(payload.path.slice(payload.path.lastIndexOf('.') + 1).toLowerCase());
@@ -185,6 +215,7 @@ function photopea_content_type(ext: string): string {
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const { bucket } = env;
+		const started = Date.now();
 
 		// 签名模式（配了 SIGNING_SECRET）下跳过 Basic：调用方是浏览器里的在线服务，
 		// 跨源带不了凭据，由 URL 里的 HMAC token 负责校验。直连模式没有这条路由。
@@ -200,6 +231,8 @@ export default {
 			!is_editors_save_request &&
 			!is_authorized(request.headers.get('Authorization') ?? '', env.USERNAME, env.PASSWORD)
 		) {
+			// 打点：未授权（含完全没带凭据的探测流量）。凭据本身绝不落日志。
+			log_warn('401 unauthorized', { method: request.method, path: pathname });
 			return new Response('Unauthorized', {
 				status: 401,
 				headers: {
@@ -264,6 +297,16 @@ export default {
 		response.headers.set('Access-Control-Allow-Credentials', 'false');
 		response.headers.set('Access-Control-Max-Age', '86400');
 		response.headers.set('MS-Author-Via', 'DAV');
+
+		// 打点：每条请求一行 access log。token 型请求只带前 12 位，凭据永不落日志。
+		const is_token_request = is_onlyoffice_token_request || is_editors_save_request;
+		log_info('req', {
+			method: request.method,
+			path: pathname,
+			status: response.status,
+			ms: Date.now() - started,
+			...(is_token_request ? { tok: token_hint(pathname.slice(pathname.lastIndexOf('/') + 1)) } : {}),
+		});
 
 		return response;
 	},

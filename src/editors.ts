@@ -28,6 +28,7 @@
 
 import { base_url, extension_of, json_response, normalize_path } from './utils';
 import { mint_token, verify_token } from './signing';
+import { log_info, log_warn, token_hint } from './log';
 
 export type EditorDef = {
 	/** 稳定 id，客户端按它分派（drawio / photopea）。 */
@@ -127,16 +128,19 @@ export async function create_photopea_session(
 ): Promise<Response> {
 	const secret = env.SIGNING_SECRET;
 	if (!secret) {
+		log_warn('pp.session rejected', { reason: 'no_signing_secret' });
 		return json_response({ error: 'Photopea session requires SIGNING_SECRET' }, 501);
 	}
 
 	const url = new URL(request.url);
 	const rawPath = url.searchParams.get('path');
 	if (rawPath === null) {
+		log_warn('pp.session rejected', { reason: 'missing_path' });
 		return json_response({ error: 'Missing "path" query parameter' }, 400);
 	}
 	const path = normalize_path(rawPath);
 	if (path === null) {
+		log_warn('pp.session rejected', { reason: 'bad_path', raw: rawPath.slice(0, 60) });
 		return json_response({ error: 'Invalid "path" parameter' }, 400);
 	}
 
@@ -165,6 +169,15 @@ export async function create_photopea_session(
 		formats: photopea_formats(name),
 	};
 
+	// 打点：签发了哪个文件的读写短链（token 只露前 12 位）。
+	log_info('pp.session', {
+		path: `/${path}`,
+		read_tok: token_hint(readToken),
+		read_ttl: '1h',
+		write_tok: token_hint(writeToken),
+		write_ttl: '7d',
+	});
+
 	/**
 	 * PP 官方 hash 启动 JSON（aqY 源码）：
 	 * - files: 启动即打开的文件（PP 自己 XHR）
@@ -191,6 +204,10 @@ export async function verify_save_token(
 	mode: 'read' | 'write' = 'write',
 ): Promise<{ path: string; title: string; mode: string } | null> {
 	const payload = await verify_token(secret, token, mode);
-	if (payload === null) return null;
+	if (payload === null) {
+		// 打点：签名/过期/mode 不匹配都落在这。外面这层只看得见 403，这里给出区分度。
+		log_warn(`pp.${mode} rejected`, { reason: 'bad_token', tok: token_hint(token) });
+		return null;
+	}
 	return { path: payload.path, title: payload.title, mode: payload.mode };
 }

@@ -18,6 +18,7 @@
 import { encode_path, extension_of, json_response, normalize_path } from './utils';
 import { hex, mint_token, verify_token } from './signing';
 import type { TokenPayload } from './signing';
+import { log_error, log_info, log_warn, token_hint } from './log';
 
 /** 签名模式下带 token 的路径前缀；index.ts 靠它决定哪些请求可以跳过 Basic 鉴权。 */
 export const ONLYOFFICE_TOKEN_PREFIX = '/onlyoffice/doc/';
@@ -223,6 +224,18 @@ async function create_session(request: Request, env: OnlyOfficeEnv, webdav: Webd
 					})}`,
 				};
 
+	// 打点：签发了哪个文件的读写短链（token 只露前 12 位）。
+	log_info(secret === undefined ? 'oo.session direct' : 'oo.session signed', {
+		path: `/${path}`,
+		key,
+		...(secret === undefined
+			? {}
+			: {
+					read_tok: token_hint(urls.url.slice(urls.url.lastIndexOf('/') + 1)),
+					write_tok: token_hint(urls.saveUrl.slice(urls.saveUrl.lastIndexOf('/') + 1)),
+				}),
+	});
+
 	return json_response({
 		// office-website 的编辑器页把这些直接塞进 DocEditor 的 config
 		fileType: extension,
@@ -254,12 +267,14 @@ async function read_document(
 ): Promise<Response> {
 	const payload = await verify_token(secret, token, 'read');
 	if (payload === null) {
+		log_warn('oo.read rejected', { reason: 'bad_token', tok: token_hint(token) });
 		return json_response({ error: 'Invalid or expired read token' }, 403);
 	}
 
 	const method = request.method === 'HEAD' ? 'HEAD' : 'GET';
 	const upstream = await webdav_fetch(env, request, payload.path, { method }, webdav);
 	if (upstream.status === 404) {
+		log_warn('oo.read miss', { path: `/${payload.path}` });
 		return json_response({ error: `File not found: /${payload.path}` }, 404);
 	}
 	if (!upstream.ok) {
@@ -295,6 +310,7 @@ async function write_document(
 ): Promise<Response> {
 	const payload = await verify_token(secret, token, 'write');
 	if (payload === null) {
+		log_warn('oo.write rejected', { reason: 'bad_token', tok: token_hint(token) });
 		return json_response({ error: 'Invalid or expired write token' }, 403);
 	}
 
@@ -322,12 +338,14 @@ async function write_document(
 		webdav,
 	);
 	if (!upstream.ok) {
+		log_error('oo.write failed', { path: `/${payload.path}`, upstream: upstream.status });
 		return json_response({ error: `Upstream error: PUT /${payload.path} returned ${upstream.status}` }, 502);
 	}
 
 	// 再探一次元数据，把新的 etag / key 回给宿主页面（内容变了，key 就该变）
 	const head = await webdav_fetch(env, request, payload.path, { method: 'HEAD' }, webdav);
 	const etag = head.headers.get('etag');
+	log_info('oo.write done', { path: `/${payload.path}`, status: upstream.status, etag: etag ?? 'none' });
 	return json_response({
 		ok: true,
 		path: `/${payload.path}`,
