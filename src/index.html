@@ -1035,7 +1035,7 @@
 					</template>
 				</nav>
 				<select class="lang-select" :value="lang" @change="setLang($event.target.value)" aria-label="Language">
-					<template x-for="code in SUPPORTED_LANGS" :key="code">
+					<template x-for="code in supportedLangs" :key="code">
 						<option :value="code" x-text="code === 'en' ? 'EN' : '中文'" :selected="lang === code"></option>
 					</template>
 				</select>
@@ -1317,6 +1317,27 @@
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg
 						><span x-text="t('compressZip')"></span>
+					</button>
+					<!-- 外部编辑器（draw.io / Photopea）：新标签页弹窗打开，页面内零嵌入 -->
+					<button
+						id="entry-external-drawio-button"
+						class="sheet__item"
+						x-show="canOpenInExternal(sheet, 'drawio')"
+						@click="openExternalEntry(sheet, 'drawio')"
+						aria-label="Open in draw.io"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg
+						><span x-text="t('openInDrawio')"></span>
+					</button>
+					<button
+						id="entry-external-photopea-button"
+						class="sheet__item"
+						x-show="canOpenInExternal(sheet, 'photopea')"
+						@click="openExternalEntry(sheet, 'photopea')"
+						aria-label="Open in Photopea"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg
+						><span x-text="t('openInPhotopea')"></span>
 					</button>
 					<a
 						id="entry-download-link"
@@ -1719,6 +1740,8 @@
 				window.browser = function () {
 					return {
 						lang: resolve_lang(),
+						// 模板要用（x-for 语言选择器）：IIFE 改造后 SUPPORTED_LANGS 是闭包私有，需经组件暴露。
+						supportedLangs: SUPPORTED_LANGS,
 						// 已加载的语言包（含内联 en）；放进组件里才有响应式，切语言后所有 t() 绑定会重算。
 						locales: { ...FALLBACK_LOCALE },
 						async init() {
@@ -1780,6 +1803,7 @@
 						sheet: null,
 						// 服务端注入的编辑器配置（见 index.ts）；null = 不显示入口。
 						onlyoffice: (window.__APP_CONFIG__ && window.__APP_CONFIG__.onlyoffice) || null,
+						editors: (window.__APP_CONFIG__ && window.__APP_CONFIG__.editors) || [],
 						confirmTarget: null,
 						uploadConflicts: null,
 						newMenu: false,
@@ -1940,6 +1964,32 @@
 							const dot = entry.name.lastIndexOf('.');
 							const extension = dot === -1 ? '' : entry.name.slice(dot + 1).toLowerCase();
 							return this.onlyoffice.extensions.indexOf(extension) !== -1;
+						},
+
+						/**
+						 * 外部编辑器（draw.io / Photopea）：**顶层直开**，页面与窗口内零编辑器 UI。
+						 * 协议与保存回路都在 src/editors.client.js：
+						 * - draw.io 走 opener 模式 embed JSON 协议（本页收 init/autosave/save，PUT 回桶）；
+						 * - Photopea 走官方 hash 启动配置（PP 自己拉文件、自己 POST 保存到签名端点）。
+						 * 清单由服务端注入 —— 没配 URL 的编辑器不给按钮。
+						 */
+						canOpenInExternal(entry, id) {
+							if (!entry || entry.isDir || !this.editors || !this.editors.length) return false;
+							const def = this.editors.find((e) => e.id === id);
+							if (!def) return false;
+							const ext = window.external_editors ? window.external_editors.ext_of(entry.name) : '';
+							return def.extensions.indexOf(ext) !== -1;
+						},
+
+						openExternalEntry(entry, id) {
+							if (!window.external_editors || !window.external_editors.canOpenInExternal(entry, id)) return;
+							const def = (this.editors || []).find((e) => e.id === id);
+							if (!def) return;
+							this.sheet = null;
+							window.external_editors.openExternal(entry, def, {
+								notify: (key, params) => this.notify(this.t(key, params)),
+								onClose: () => this.refresh(),
+							});
 						},
 
 						/**
@@ -2117,7 +2167,6 @@
 							this.folder = { open: true, name: this.default_folder_name(), busy: false, error: '' };
 						},
 
-						/** 同 default_new_name()；用英文是因为目录名会进 URL。 */
 						default_folder_name() {
 							const taken = new Set(this.entries.map((entry) => entry.name));
 							if (!taken.has('new-folder')) return 'new-folder';
@@ -2627,6 +2676,7 @@
 			})();
 		</script>
 		<script defer src="/_app/archive.client.js"></script>
+		<script defer src="/_app/editors.client.js"></script>
 		<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
 	</body>
 </html>

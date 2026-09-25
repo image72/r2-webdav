@@ -8,6 +8,7 @@
 import { decode_path, encode_path, is_os_metadata_key, listDir } from './r2';
 import PAGE_HTML from './index.html';
 import ARCHIVE_JS from './archive.client.js';
+import EDITORS_JS from './editors.client.js';
 // Default pack is inlined into the page (no extra request, no flash); the rest are
 // served on demand from LOCALE_ASSET_PATH.
 import en from './locales/en.json';
@@ -22,6 +23,8 @@ export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
  * 不能用相对路径：页面本身是挂在任意集合路径上的（`/sub/` 也返回这个页面）。
  */
 export const ARCHIVE_ASSET_PATH = '/_app/archive.client.js';
+/** 外部编辑器（draw.io / Photopea）列表页脚本：分派 window.open + drawio opener 协议。 */
+export const EDITORS_ASSET_PATH = '/_app/editors.client.js';
 
 /** On-demand locale packs, e.g. /_app/locales/zh.json. en is inlined in the page instead. */
 const LOCALES: Record<string, unknown> = { en, zh };
@@ -45,6 +48,15 @@ export function handle_asset_request(request: Request): Response | null {
 				'Content-Type': 'text/javascript; charset=utf-8',
 				// no-cache 而不是长缓存：改了文件刷新就生效，不用去记版本号。
 				// 将来真要长缓存，把版本写进 URL 比写在这里稳。
+				'Cache-Control': 'no-cache',
+			},
+		});
+	}
+	if (pathname === EDITORS_ASSET_PATH) {
+		return new Response(request.method === 'HEAD' ? null : EDITORS_JS, {
+			status: 200,
+			headers: {
+				'Content-Type': 'text/javascript; charset=utf-8',
 				'Cache-Control': 'no-cache',
 			},
 		});

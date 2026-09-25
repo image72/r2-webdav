@@ -128,23 +128,31 @@ npm run deploy # = wrangler deploy
 - 打包 / 解压上限 80 MB，只改 `src/archive.client.js` 里的 `ZIP_BYTE_LIMIT` 一处即可。
 - 浏览器端依赖 CDN：Alpine.js、JSZip、markdown-it、mermaid 全部从 jsdelivr 拉取；内网或离线部署需要把这些依赖一并自托管。
 
-## 可选：在线编辑办公文档
+## 可选：在线编辑器
 
-装一个在线编辑器，操作面板里就会出现「用 ONLYOFFICE 打开」，直接改、直接存回：
+配一个在线编辑器地址，操作面板里就会出现对应的「打开」入口，直接改、直接存回：
 
 ```toml
-# wrangler.toml
+# wrangler.toml（三个都可选，配哪个出现哪个）
 [vars]
-ONLYOFFICE_EDITOR_URL = "https://<editor-host>/editor"
+ONLYOFFICE_EDITOR_URL = "https://<editor-host>/editor" # 办公文档：docx / xlsx / pptx…
+DRAWIO_EDITOR_URL = "https://draw.io"                  # 图表：.drawio / .xml
+PHOTOPEA_EDITOR_URL = "https://www.photopea.com/"      # 图片：psd / png / jpg / svg…
 ```
 
 ```bash
-npx wrangler secret put SIGNING_SECRET # required for cross-origin setups
+npx wrangler secret put SIGNING_SECRET # ONLYOFFICE / Photopea 需要；draw.io 不需要
 ```
 
-编辑器页面用 [office-website](https://github.com/baotlake/office-website)：ONLYOFFICE 与 x2t 转换器都跑在浏览器里，不需要 Document Server。打开时它拿一个短期签名 URL 取文件，保存时把结果 `PUT` 回 `saveUrl` —— 两边都是标准 WebDAV，所以编辑器和 WebDAV 可以在不同域名上。
+- **ONLYOFFICE** 用 [office-website](https://github.com/baotlake/office-website)：编辑器与
+  x2t 转换器都跑在浏览器里，不需要 Document Server。
+- **draw.io** / **Photopea** 直接用官方站或自建实例都行（集成走的是两家官方公开的
+  接入协议，零源码改动；真人浏览器访问官方站不受其 Cloudflare 防护影响）。
+- 编辑器与 WebDAV 可以在不同域名上：跨源时打开 / 保存都靠短期签名 URL 鉴权。
 
-两个变量都不配，这个功能就完全不存在。细节与自测见 [docs/onlyoffice.md](docs/onlyoffice.md)。
+哪个变量都不配，对应功能就完全不存在。细节与自测见
+[docs/onlyoffice.md](docs/onlyoffice.md)、[docs/drawio.md](docs/drawio.md)、
+[docs/photopea.md](docs/photopea.md)。
 
 <details>
 <summary><h2>项目结构：每个文件负责什么</h2></summary>
@@ -158,9 +166,13 @@ src/archive.client.js    浏览器端 zip 打包 / 解压（独立模块，可�
 src/archive.client.d.ts  上面那个文件的类型声明（作为 Text 模块导入需要）
 src/r2.ts                R2 访问工具：路径编解码、列表、并发控制、OS 元数据过滤
 src/onlyoffice.ts        可选：ONLYOFFICE 打开 / 保存 adapter（可整块删掉，其余代码不受影响）
+src/editors.ts           可选：draw.io / Photopea 顶层直开（可整块删掉，其余代码不受影响）
+src/editors.client.js    上面那个模块的浏览器端脚本（文本模块）
 src/signing.ts           短链签名原语（多个在线服务共用一把 SIGNING_SECRET）
 docs/webdav-fix-list.md  协议层的缺陷清单与修复记录
-docs/onlyoffice.md       上面那个 adapter 的协议说明、启用方式与自测
+docs/onlyoffice.md       ONLYOFFICE adapter 的协议说明、启用方式与自测
+docs/drawio.md           draw.io 集成：配置与 embed 协议
+docs/photopea.md         Photopea 集成：配置与签名短链
 docs/screenshots/        README 用的截图
 ```
 

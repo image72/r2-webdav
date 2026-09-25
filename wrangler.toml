@@ -4,25 +4,15 @@ name = "r2-webdav"
 
 compatibility_flags = ["nodejs_compat"]
 
-# 页面从 ui.ts 里拆出来单独放 src/index.html，作为「文本模块」引入：
-#   import PAGE_HTML from './index.html'   （见 src/ui.ts）
-# type 只能是 ESModule / CommonJS / CompiledWasm / Text / Data。
-# wrangler 自带的默认规则里本来就有 {"type":"Text","globs":["**/*.txt","**/*.html"]}，
-# 这里仍然显式写一遍：不依赖隐式默认（将来默认变了会报一个很难懂的错），
-# 并加 fallthrough = true 让默认规则继续生效，否则 wrangler 会告警说默认规则被遮住。
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#bundling
 [[rules]]
 type = "Text"
 globs = ["**/*.html"]
 fallthrough = true
 
-# 客户端脚本（src/archive.client.js）也作为文本模块引入，由 Worker 在 /_app/ 下当静态资源发出去。
-# glob 必须以 `**/` 开头：规则是按**绝对路径**匹配的，写 "src/archive.client.js" 永远不命中
-# （实测：规则不生效时 esbuild 会把它当普通 JS 模块加载，报 "No matching export ... default"）。
-# 也不能写成 `**/*.js`：那会把 src/gateway.js 之类的真实 JS 源码一并变成文本模块。
 [[rules]]
 type = "Text"
-globs = ["**/archive.client.js"]
+globs = ["**/archive.client.js", "**/editors.client.js"]
 fallthrough = true
 
 [[r2_buckets]]
@@ -34,6 +24,12 @@ bucket_name = "webdav"
 # USERNAME = "set via Cloudflare Secrets"
 # PASSWORD = "set via Cloudflare Secrets"
 ONLYOFFICE_EDITOR_URL = "https://office-website-7xv.pages.dev/editor"
+
+# External editor pages (top-level window.open, zero source modification, zero wrapper).
+# draw.io uses the opener-mode embed protocol; Photopea uses signed session + hash config
+# (needs SIGNING_SECRET configured for the save endpoint).
+# DRAWIO_EDITOR_URL = "https://drawio.image72.workers.dev/"
+# PHOTOPEA_EDITOR_URL = "https://photopea.image72.workers.dev/"
 
 # Optional. Online editor page for the "open in ONLYOFFICE" action; needs SIGNING_SECRET.
 # SIGNING_SECRET = "<oo-joint-test-secret>"
