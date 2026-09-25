@@ -1967,9 +1967,11 @@
 						},
 
 						/**
-						 * 外部编辑器（draw.io / Photopea）：协议、保存回路都在 src/editors.client.js，
-						 * 页面只负责入口判断与分派。清单由服务端注入（editors.client.js 也自持一份，
-						 * 但入口显示以服务端配置为准 —— 没配 URL 的编辑器不给按钮）。
+						 * 外部编辑器（draw.io / Photopea）：**顶层直开**，页面与窗口内零编辑器 UI。
+						 * 协议与保存回路都在 src/editors.client.js：
+						 * - draw.io 走 opener 模式 embed JSON 协议（本页收 init/autosave/save，PUT 回桶）；
+						 * - Photopea 走官方 hash 启动配置（PP 自己拉文件、自己 POST 保存到签名端点）。
+						 * 清单由服务端注入 —— 没配 URL 的编辑器不给按钮。
 						 */
 						canOpenInExternal(entry, id) {
 							if (!entry || entry.isDir || !this.editors || !this.editors.length) return false;
@@ -1979,16 +1981,15 @@
 							return def.extensions.indexOf(ext) !== -1;
 						},
 
-						/**
-						 * 用外部编辑器打开：新标签页弹到宿主页（/_app/editor-host），
-						 * 页面内不嵌任何编辑器（用户要求）；保存后返回时列表自动刷新。
-						 */
 						openExternalEntry(entry, id) {
-							if (!window.external_editors || !window.external_editors.canOpenInExternal(entry)) return;
+							if (!window.external_editors || !window.external_editors.canOpenInExternal(entry, id)) return;
 							const def = (this.editors || []).find((e) => e.id === id);
 							if (!def) return;
 							this.sheet = null;
-							window.external_editors.openExternal(entry, def, {});
+							window.external_editors.openExternal(entry, def, {
+								notify: (key, params) => this.notify(this.t(key, params)),
+								onClose: () => this.refresh(),
+							});
 						},
 
 						/**
