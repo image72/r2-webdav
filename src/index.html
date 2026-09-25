@@ -2012,6 +2012,9 @@
 									url: session.url,
 									fileType: session.fileType,
 									fileName: session.title,
+									// 写回短链（带 write token，TTL 24h）。编辑器保存时 PUT 到这里，
+									// 由 write_document 落 R2；不传则编辑器只落本地磁盘。
+									saveUrl: session.saveUrl,
 								});
 								const target = this.onlyoffice.editorUrl + '?' + editor_query;
 								// 新页面打开编辑器。注意不能带 noopener：设了它 window.open 按规范返回 null，
