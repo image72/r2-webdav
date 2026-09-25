@@ -22,7 +22,7 @@ fallthrough = true
 # 也不能写成 `**/*.js`：那会把 src/gateway.js 之类的真实 JS 源码一并变成文本模块。
 [[rules]]
 type = "Text"
-globs = ["**/archive.client.js"]
+globs = ["**/archive.client.js", "**/editors.client.js"]
 fallthrough = true
 
 [[r2_buckets]]
@@ -34,6 +34,10 @@ bucket_name = "webdav"
 # USERNAME = "set via Cloudflare Secrets"
 # PASSWORD = "set via Cloudflare Secrets"
 ONLYOFFICE_EDITOR_URL = "https://office-website-7xv.pages.dev/editor"
+
+# External editor pages (official embed protocols, zero source modification).
+# DRAWIO_EDITOR_URL = "https://drawio.image72.workers.dev/"
+# PHOTOPEA_EDITOR_URL = "https://photopea.image72.workers.dev/"
 
 # Optional. Online editor page for the "open in ONLYOFFICE" action; needs SIGNING_SECRET.
 # SIGNING_SECRET = "<oo-joint-test-secret>"

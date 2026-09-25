@@ -1035,7 +1035,7 @@
 					</template>
 				</nav>
 				<select class="lang-select" :value="lang" @change="setLang($event.target.value)" aria-label="Language">
-					<template x-for="code in SUPPORTED_LANGS" :key="code">
+					<template x-for="code in supportedLangs" :key="code">
 						<option :value="code" x-text="code === 'en' ? 'EN' : '中文'" :selected="lang === code"></option>
 					</template>
 				</select>
@@ -1317,6 +1317,27 @@
 					>
 						<svg class="icon" aria-hidden="true"><use href="#i-archive"></use></svg
 						><span x-text="t('compressZip')"></span>
+					</button>
+					<!-- 外部编辑器（draw.io / Photopea）：新标签页弹窗打开，页面内零嵌入 -->
+					<button
+						id="entry-external-drawio-button"
+						class="sheet__item"
+						x-show="canOpenInExternal(sheet, 'drawio')"
+						@click="openExternalEntry(sheet, 'drawio')"
+						aria-label="Open in draw.io"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg
+						><span x-text="t('openInDrawio')"></span>
+					</button>
+					<button
+						id="entry-external-photopea-button"
+						class="sheet__item"
+						x-show="canOpenInExternal(sheet, 'photopea')"
+						@click="openExternalEntry(sheet, 'photopea')"
+						aria-label="Open in Photopea"
+					>
+						<svg class="icon" aria-hidden="true"><use href="#i-external"></use></svg
+						><span x-text="t('openInPhotopea')"></span>
 					</button>
 					<a
 						id="entry-download-link"
@@ -1719,6 +1740,8 @@
 				window.browser = function () {
 					return {
 						lang: resolve_lang(),
+						// 模板要用（x-for 语言选择器）：IIFE 改造后 SUPPORTED_LANGS 是闭包私有，需经组件暴露。
+						supportedLangs: SUPPORTED_LANGS,
 						// 已加载的语言包（含内联 en）；放进组件里才有响应式，切语言后所有 t() 绑定会重算。
 						locales: { ...FALLBACK_LOCALE },
 						async init() {
@@ -1780,6 +1803,7 @@
 						sheet: null,
 						// 服务端注入的编辑器配置（见 index.ts）；null = 不显示入口。
 						onlyoffice: (window.__APP_CONFIG__ && window.__APP_CONFIG__.onlyoffice) || null,
+						editors: (window.__APP_CONFIG__ && window.__APP_CONFIG__.editors) || [],
 						confirmTarget: null,
 						uploadConflicts: null,
 						newMenu: false,
@@ -1940,6 +1964,31 @@
 							const dot = entry.name.lastIndexOf('.');
 							const extension = dot === -1 ? '' : entry.name.slice(dot + 1).toLowerCase();
 							return this.onlyoffice.extensions.indexOf(extension) !== -1;
+						},
+
+						/**
+						 * 外部编辑器（draw.io / Photopea）：协议、保存回路都在 src/editors.client.js，
+						 * 页面只负责入口判断与分派。清单由服务端注入（editors.client.js 也自持一份，
+						 * 但入口显示以服务端配置为准 —— 没配 URL 的编辑器不给按钮）。
+						 */
+						canOpenInExternal(entry, id) {
+							if (!entry || entry.isDir || !this.editors || !this.editors.length) return false;
+							const def = this.editors.find((e) => e.id === id);
+							if (!def) return false;
+							const ext = window.external_editors ? window.external_editors.ext_of(entry.name) : '';
+							return def.extensions.indexOf(ext) !== -1;
+						},
+
+						/**
+						 * 用外部编辑器打开：新标签页弹到宿主页（/_app/editor-host），
+						 * 页面内不嵌任何编辑器（用户要求）；保存后返回时列表自动刷新。
+						 */
+						openExternalEntry(entry, id) {
+							if (!window.external_editors || !window.external_editors.canOpenInExternal(entry)) return;
+							const def = (this.editors || []).find((e) => e.id === id);
+							if (!def) return;
+							this.sheet = null;
+							window.external_editors.openExternal(entry, def, {});
 						},
 
 						/**
@@ -2627,6 +2676,7 @@
 			})();
 		</script>
 		<script defer src="/_app/archive.client.js"></script>
+		<script defer src="/_app/editors.client.js"></script>
 		<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
 	</body>
 </html>

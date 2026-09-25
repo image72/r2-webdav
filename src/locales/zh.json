@@ -17,6 +17,8 @@
 	"save": "保存",
 	"discardConfirm": "有未保存的内容，确定放弃？",
 	"openInOnlyOffice": "用 ONLYOFFICE 打开",
+	"openInDrawio": "用 draw.io 打开",
+	"openInPhotopea": "用 Photopea 打开",
 	"compressZip": "压缩为 zip",
 	"download": "下载",
 	"downloadZip": "下载为 ZIP",

@@ -17,6 +17,8 @@
 	"save": "Save",
 	"discardConfirm": "You have unsaved changes. Discard them?",
 	"openInOnlyOffice": "Open in ONLYOFFICE",
+	"openInDrawio": "Open in draw.io",
+	"openInPhotopea": "Open in Photopea",
 	"compressZip": "Compress to ZIP",
 	"download": "Download",
 	"downloadZip": "Download as ZIP",

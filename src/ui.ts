@@ -7,7 +7,9 @@
 
 import { decode_path, encode_path, is_os_metadata_key, listDir } from './r2';
 import PAGE_HTML from './index.html';
+import HOST_HTML from './editor-host.html';
 import ARCHIVE_JS from './archive.client.js';
+import EDITORS_JS from './editors.client.js';
 // Default pack is inlined into the page (no extra request, no flash); the rest are
 // served on demand from LOCALE_ASSET_PATH.
 import en from './locales/en.json';
@@ -22,6 +24,10 @@ export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
  * 不能用相对路径：页面本身是挂在任意集合路径上的（`/sub/` 也返回这个页面）。
  */
 export const ARCHIVE_ASSET_PATH = '/_app/archive.client.js';
+/** 外部编辑器宿主脚本（draw.io / Photopea），同样挂在 _app/ 下。 */
+export const EDITORS_ASSET_PATH = '/_app/editors.client.js';
+/** 外部编辑器弹窗宿主页（新标签页打开；编辑器 iframe 嵌在这里面）。 */
+export const EDITOR_HOST_PATH = '/_app/editor-host';
 
 /** On-demand locale packs, e.g. /_app/locales/zh.json. en is inlined in the page instead. */
 const LOCALES: Record<string, unknown> = { en, zh };
@@ -47,6 +53,23 @@ export function handle_asset_request(request: Request): Response | null {
 				// 将来真要长缓存，把版本写进 URL 比写在这里稳。
 				'Cache-Control': 'no-cache',
 			},
+		});
+	}
+	if (pathname === EDITORS_ASSET_PATH) {
+		return new Response(request.method === 'HEAD' ? null : EDITORS_JS, {
+			status: 200,
+			headers: {
+				'Content-Type': 'text/javascript; charset=utf-8',
+				'Cache-Control': 'no-cache',
+			},
+		});
+	}
+	if (pathname === EDITOR_HOST_PATH) {
+		// 编辑器地址由 index.ts 的 inject_page_config 通过 __APP_CONFIG__ 提供（见下）；
+		// 这里只负责把 HTML 发出去，配置注入交给统一管道。
+		return new Response(request.method === 'HEAD' ? null : HOST_HTML, {
+			status: 200,
+			headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' },
 		});
 	}
 	if (pathname.startsWith(LOCALE_ASSET_PREFIX)) {

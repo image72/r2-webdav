@@ -9,6 +9,8 @@ import { handle_asset_request } from './ui';
 // ONLYOFFICE 适配层（可选，整块可下线）：搜 ONLYOFFICE 就能找到全部接线点。
 import { ONLYOFFICE_TOKEN_PREFIX, handle_onlyoffice_request, onlyoffice_page_config } from './onlyoffice';
 import type { WebdavTransport } from './onlyoffice';
+// 外部编辑器（draw.io / Photopea）注册表：只注入页面配置，服务端无其它职责。
+import { editors_page_config } from './editors';
 
 export interface Env {
 	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
@@ -22,6 +24,9 @@ export interface Env {
 	SIGNING_SECRET?: string;
 	// Public base URL of this service, e.g. https://dav.example.com. Defaults to the request origin.
 	EMBED_BASE_URL?: string;
+	// External editor pages (embed-only, zero source modification). Both optional.
+	DRAWIO_EDITOR_URL?: string;
+	PHOTOPEA_EDITOR_URL?: string;
 }
 
 function is_authorized(authorization_header: string, username: string, password: string): boolean {
@@ -84,8 +89,15 @@ export default {
 		// 页面里的「用 ONLYOFFICE 打开」入口需要编辑器地址与放行的扩展名；
 		// adapter 没开就返回 null，不注入任何东西。
 		const page_config = onlyoffice_page_config(env, request);
-		if (page_config !== null && (response.headers.get('Content-Type') ?? '').startsWith('text/html')) {
-			response = inject_page_config(response, { onlyoffice: page_config });
+		const editors = editors_page_config(env);
+		if (
+			(page_config !== null || editors !== null) &&
+			(response.headers.get('Content-Type') ?? '').startsWith('text/html')
+		) {
+			response = inject_page_config(response, {
+				...(page_config !== null ? { onlyoffice: page_config } : {}),
+				...(editors !== null ? { editors } : {}),
+			});
 		}
 
 		// Set CORS headers
