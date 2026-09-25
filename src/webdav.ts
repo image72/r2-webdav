@@ -726,10 +726,13 @@ async function handle_copy(request: Request, bucket: R2Bucket): Promise<Response
 	if (resource_path === destination) {
 		return new Response('Bad Request', { status: 400 });
 	}
+	// 不能把集合移进/复制进自己的子树（如 /a → /a/b），数据会丢
+	if (resource.is_collection && destination.startsWith(resource_path + '/')) {
+		return new Response('Conflict', { status: 409 });
+	}
 
 	const done = () => (destination_exists ? new Response(null, { status: 204 }) : new Response('', { status: 201 }));
 
-	// 成员数超限必须在任何写操作之前失败，不能只处理一部分。
 	let members: R2Object[] | null = null;
 	if (resource.is_collection && (request.headers.get('Depth') ?? 'infinity') === 'infinity') {
 		const listing = await listRecursive(bucket, resource_path + '/');
@@ -837,6 +840,10 @@ async function handle_move(request: Request, bucket: R2Bucket): Promise<Response
 	}
 	if (resource_path === destination) {
 		return new Response('Bad Request', { status: 400 });
+	}
+	// 不能把集合移进/复制进自己的子树（如 /a → /a/b），数据会丢
+	if (resource.is_collection && destination.startsWith(resource_path + '/')) {
+		return new Response('Conflict', { status: 409 });
 	}
 
 	const done = () => (destination_exists ? new Response(null, { status: 204 }) : new Response('', { status: 201 }));

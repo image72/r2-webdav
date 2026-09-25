@@ -13,6 +13,7 @@
 	'use strict';
 
 	const JSZIP_URL = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+	const JSZIP_INTEGRITY = 'sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG';
 
 	/** 压缩 / 解压的字节上限；改上限只改这一处。 */
 	const ZIP_BYTE_LIMIT = 80 * 1024 * 1024;
@@ -32,6 +33,8 @@
 			await new Promise((resolve, reject) => {
 				const script = document.createElement('script');
 				script.src = JSZIP_URL;
+				script.integrity = JSZIP_INTEGRITY;
+				script.crossOrigin = 'anonymous';
 				script.onload = resolve;
 				script.onerror = () => reject(new Error('JSZip 加载失败（CDN 不可达？）'));
 				document.head.appendChild(script);

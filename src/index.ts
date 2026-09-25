@@ -130,7 +130,12 @@ async function handle_editors_request(request: Request, env: Env, webdav: Webdav
 		const head = await webdav(
 			new Request(`${new URL(request.url).origin}/${encode_path(payload.path)}`, { method: 'HEAD' }),
 		);
-		return json_response({ ok: true, newSource: payload.path, etag: head.headers.get('etag') });
+		return json_response({
+			ok: true,
+			newSource: payload.path,
+			etag: head.ok ? head.headers.get('etag') : null,
+			...(head.ok ? {} : { warning: `HEAD failed (${head.status})` }),
+		});
 	}
 
 	if (pathname.startsWith(EDITORS_READ_PREFIX)) {
@@ -184,11 +189,10 @@ export default {
 		// 签名模式（配了 SIGNING_SECRET）下跳过 Basic：调用方是浏览器里的在线服务，
 		// 跨源带不了凭据，由 URL 里的 HMAC token 负责校验。直连模式没有这条路由。
 		const pathname = new URL(request.url).pathname;
-		const is_onlyoffice_token_request =
-			env.SIGNING_SECRET !== undefined && pathname.startsWith(ONLYOFFICE_TOKEN_PREFIX);
+		const is_onlyoffice_token_request = Boolean(env.SIGNING_SECRET) && pathname.startsWith(ONLYOFFICE_TOKEN_PREFIX);
 		// Photopea 保存端点：PP 弹窗发起 POST，带不了 Basic —— 靠 URL 里的写 token 鉴权。
 		const is_editors_save_request =
-			env.SIGNING_SECRET !== undefined &&
+			Boolean(env.SIGNING_SECRET) &&
 			(pathname.startsWith(EDITORS_SAVE_PREFIX) || pathname.startsWith(EDITORS_READ_PREFIX));
 		if (
 			request.method !== 'OPTIONS' &&

@@ -1697,7 +1697,8 @@
 
 				function markdown_to_html(text) {
 					if (!markdown_renderer) {
-						markdown_renderer = window.markdownit({ html: true, linkify: true, typographer: true, breaks: true });
+						// html:false —— 用户 md 里的 raw HTML 会转义显示，防止 XSS（该页面持有 WebDAV 会话）
+						markdown_renderer = window.markdownit({ html: false, linkify: true, typographer: true, breaks: true });
 					}
 					return markdown_renderer.render(text);
 				}
@@ -2105,11 +2106,15 @@
 							}
 						},
 
-						loadScript(src) {
+						loadScript(src, integrity) {
 							if (document.querySelector('script[src="' + src + '"]')) return Promise.resolve();
 							return new Promise((resolve, reject) => {
 								const script = document.createElement('script');
 								script.src = src;
+								if (integrity) {
+									script.integrity = integrity;
+									script.crossOrigin = 'anonymous';
+								}
 								script.onload = resolve;
 								script.onerror = reject;
 								document.head.appendChild(script);
@@ -2117,8 +2122,14 @@
 						},
 
 						async loadMarkdown() {
-							await this.loadScript('https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js');
-							await this.loadScript('https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js');
+							await this.loadScript(
+								'https://cdn.jsdelivr.net/npm/markdown-it@14.0.0/dist/markdown-it.min.js',
+								'sha384-m4eAATWFHwurgWQTBxFRh5346JXxGTucT+lJH2TcxGrE+vNBENJGasyBNnLc23ft',
+							);
+							await this.loadScript(
+								'https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js',
+								'sha384-6F4Ibv/ylL12O35KFWTeGTHuBKDz5L6yjKsgv3QHQ8s4NTqlDXq7kMlYXGs7MHFc',
+							);
 						},
 
 						// markdown-it 把 mermaid 渲染成 <pre><code>，先换成节点再绘制；root 是包含它的容器。
@@ -2677,6 +2688,11 @@
 		</script>
 		<script defer src="/_app/archive.client.js"></script>
 		<script defer src="/_app/editors.client.js"></script>
-		<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+		<script
+			defer
+			src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"
+			integrity="sha384-9Ax3MmS9AClxJyd5/zafcXXjxmwFhZCdsT6HJoJjarvCaAkJlk5QDzjLJm+Wdx5F"
+			crossorigin="anonymous"
+		></script>
 	</body>
 </html>

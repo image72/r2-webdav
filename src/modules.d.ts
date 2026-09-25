@@ -15,3 +15,11 @@ declare module '*.json' {
 	const content: unknown;
 	export default content;
 }
+
+/**
+ * 注意：allowJs 若改回 true，真文件会重新被解析成模块，此声明即失效（TS2306）。
+ */
+declare module '*.client.js' {
+	const source: string;
+	export default source;
+}

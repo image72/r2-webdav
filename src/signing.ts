@@ -55,7 +55,7 @@ export async function verify_token(secret: string, token: string, mode: TokenMod
 		return null;
 	}
 	if (payload.mode !== mode) return null;
-	if (typeof payload.expires !== 'number' || payload.expires * 1000 <= Date.now()) return null;
+	if (!Number.isFinite(payload.expires) || payload.expires <= 0 || payload.expires * 1000 <= Date.now()) return null;
 	if (typeof payload.path !== 'string' || payload.path === '') return null;
 	return payload;
 }
@@ -79,6 +79,10 @@ function hmac_key(secret: string): Promise<CryptoKey> {
 			['sign', 'verify'],
 		);
 		key_cache.set(secret, cached);
+		// 失败的 promise 不能留在缓存里，否则同一 secret 的后续请求会一直被污染
+		void cached.catch(() => {
+			if (key_cache.get(secret) === cached) key_cache.delete(secret);
+		});
 	}
 	return cached;
 }
