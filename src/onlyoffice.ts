@@ -38,7 +38,7 @@ const EXTENSION_TYPES: Record<string, { documentType: string; contentType: strin
 	doc: { documentType: 'word', contentType: 'application/msword' },
 	odt: { documentType: 'word', contentType: 'application/vnd.oasis.opendocument.text' },
 	rtf: { documentType: 'word', contentType: 'application/rtf' },
-	txt: { documentType: 'word', contentType: 'text/plain; charset=utf-8' },
+	// txt: { documentType: 'word', contentType: 'text/plain; charset=utf-8' },
 	// 电子表格
 	xlsx: { documentType: 'cell', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
 	xls: { documentType: 'cell', contentType: 'application/vnd.ms-excel' },
