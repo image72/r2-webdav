@@ -9,12 +9,12 @@
 import {
 	PERFORMANCE_CONFIG,
 	decode_path,
-	encode_path,
 	is_os_metadata_key,
 	listDir,
 	listRecursive,
 	processWithConcurrencyLimit,
 } from './r2';
+import { encode_path } from './utils';
 import { handle_browse_request } from './ui';
 
 type DavProperties = {

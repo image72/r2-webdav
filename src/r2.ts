@@ -17,11 +17,6 @@ export function decode_path(path: string): string {
 		.join('/');
 }
 
-/** 把 key 编码成合法的 href；与 decode_path 互逆，保证客户端拿到的 href 能原样请求回来。 */
-export function encode_path(path: string): string {
-	return path.split('/').map(encodeURIComponent).join('/');
-}
-
 // Performance configuration constants
 export const PERFORMANCE_CONFIG = {
 	MAX_OBJECTS_PER_REQUEST: 3000, // Limit for directory listings

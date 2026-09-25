@@ -26,8 +26,8 @@
  * EDITORS 相关接线 + wrangler.toml 的两个 URL 变量。
  */
 
-import { json_response } from './signing';
-import { encode_path } from './r2';
+import { base_url, extension_of, json_response, normalize_path } from './utils';
+import { mint_token, verify_token } from './signing';
 
 export type EditorDef = {
 	/** 稳定 id，客户端按它分派（drawio / photopea）。 */
@@ -68,8 +68,7 @@ const REGISTRY: Array<Omit<EditorDef, 'url'>> = [
 
 /** Photopea server.formats：PP 保存时按原扩展名导出（psb 存 psb，tif/tiff 归一 tiff）。 */
 function photopea_formats(name: string): string[] {
-	const dot = name.lastIndexOf('.');
-	const ext = dot === -1 ? '' : name.slice(dot + 1).toLowerCase();
+	const ext = extension_of(name);
 	if (ext === 'psb') return ['psb'];
 	if (ext === 'tif' || ext === 'tiff') return ['tiff'];
 	return ext ? [ext] : ['psd'];
@@ -142,10 +141,9 @@ export async function create_photopea_session(
 	}
 
 	const name = path.slice(path.lastIndexOf('/') + 1);
-	const base = (env.EMBED_BASE_URL ?? url.origin).replace(/\/+$/, '');
+	const base = base_url(env.EMBED_BASE_URL, request);
 	const now = Math.floor(Date.now() / 1000);
 
-	const { mint_token } = await import('./signing');
 	const readToken = await mint_token(secret, {
 		path,
 		mode: 'read',
@@ -192,22 +190,7 @@ export async function verify_save_token(
 	token: string,
 	mode: 'read' | 'write' = 'write',
 ): Promise<{ path: string; title: string; mode: string } | null> {
-	const { verify_token } = await import('./signing');
 	const payload = await verify_token(secret, token, mode);
 	if (payload === null) return null;
 	return { path: payload.path, title: payload.title, mode: payload.mode };
 }
-
-/** 规范化路径：去前导斜杠、拒绝空段与 `..`（与 onlyoffice.ts 同规则）。 */
-function normalize_path(value: string): string | null {
-	const segments: string[] = [];
-	for (const segment of value.replace(/^\/+/, '').split('/')) {
-		if (segment === '' || segment === '.') continue;
-		if (segment === '..') return null;
-		segments.push(segment);
-	}
-	return segments.length === 0 ? null : segments.join('/');
-}
-
-// encode_path 在会话里没有直接用到；保留 import 以便 read 端点未来复用同一编码规则。
-void encode_path;

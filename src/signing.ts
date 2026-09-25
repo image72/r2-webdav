@@ -1,9 +1,11 @@
 /**
- * 签名短链的公共原语：token 签发 / 校验 / 编码。
+ * 签名短链原语：token 签发 / 校验。
  *
- * 与具体服务无关：drawio、Photopea 这类浏览器在线服务共用同一套短链和同一个
- * `SIGNING_SECRET`，各服务自己的扩展名映射与会话响应留在各自模块里。
+ * 与具体服务无关：drawio、Photopea、ONLYOFFICE 共用同一套短链和同一个
+ * `SIGNING_SECRET`。base64 / JSON 响应这类纯工具在 utils.ts，本文件只管 token。
  */
+
+import { base64_to_bytes, base64url_encode } from './utils';
 
 /** 短链方向：read 只能取文件，write 只能覆盖写回。 */
 export type TokenMode = 'read' | 'write';
@@ -33,7 +35,7 @@ export async function verify_token(secret: string, token: string, mode: TokenMod
 		return null;
 	}
 	const body = token.slice(0, dot);
-	const signature = base64url_decode(token.slice(dot + 1));
+	const signature = base64_to_bytes(token.slice(dot + 1));
 	if (signature === null) {
 		return null;
 	}
@@ -42,7 +44,7 @@ export async function verify_token(secret: string, token: string, mode: TokenMod
 		return null;
 	}
 
-	const raw = base64url_decode(body);
+	const raw = base64_to_bytes(body);
 	if (raw === null) {
 		return null;
 	}
@@ -83,29 +85,4 @@ function hmac_key(secret: string): Promise<CryptoKey> {
 
 export function hex(bytes: Uint8Array): string {
 	return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function base64url_encode(bytes: Uint8Array): string {
-	let binary = '';
-	for (const byte of bytes) binary += String.fromCharCode(byte);
-	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function base64url_decode(value: string): Uint8Array | null {
-	try {
-		const padded = value.replace(/-/g, '+').replace(/_/g, '/');
-		const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
-		const bytes = new Uint8Array(binary.length);
-		for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-		return bytes;
-	} catch {
-		return null;
-	}
-}
-
-export function json_response(body: unknown, status = 200): Response {
-	return new Response(JSON.stringify(body), {
-		status,
-		headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
-	});
 }

@@ -5,7 +5,8 @@
  * 协议实现（PROPFIND/PUT/COPY…）全部留在 webdav.ts，两边互不引用。
  */
 
-import { decode_path, encode_path, is_os_metadata_key, listDir } from './r2';
+import { decode_path, is_os_metadata_key, listDir } from './r2';
+import { encode_path } from './utils';
 import PAGE_HTML from './index.html';
 import ARCHIVE_JS from './archive.client.js';
 import EDITORS_JS from './editors.client.js';

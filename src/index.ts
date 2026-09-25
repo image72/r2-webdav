@@ -5,7 +5,6 @@
  */
 
 import { SUPPORT_METHODS, dispatch_handler } from './webdav';
-import { encode_path } from './r2';
 import { handle_asset_request } from './ui';
 // ONLYOFFICE 适配层（可选，整块可下线）：搜 ONLYOFFICE 就能找到全部接线点。
 import { ONLYOFFICE_TOKEN_PREFIX, handle_onlyoffice_request, onlyoffice_page_config } from './onlyoffice';
@@ -18,7 +17,7 @@ import {
 	editors_page_config,
 	verify_save_token,
 } from './editors';
-import { json_response } from './signing';
+import { base64_to_bytes, encode_path, json_response } from './utils';
 
 export interface Env {
 	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
@@ -107,7 +106,9 @@ async function handle_editors_request(request: Request, env: Env, webdav: Webdav
 			}
 			const data = parsed.versions && parsed.versions[0] && parsed.versions[0].data;
 			if (typeof data !== 'string') return json_response({ error: 'Missing versions[0].data' }, 400);
-			bytes = base64_to_bytes(data);
+			const decoded = base64_to_bytes(data);
+			if (decoded === null) return json_response({ error: 'Malformed payload (bad base64)' }, 400);
+			bytes = decoded;
 		} else {
 			// 兼容直发二进制（未来 PP 版本或自测用）
 			bytes = new Uint8Array(await request.arrayBuffer());
@@ -157,14 +158,6 @@ async function handle_editors_request(request: Request, env: Env, webdav: Webdav
 	}
 
 	return null;
-}
-
-function base64_to_bytes(data: string): Uint8Array {
-	const normalized = data.replace(/-/g, '+').replace(/_/g, '/');
-	const binary = atob(normalized + '='.repeat((4 - (normalized.length % 4)) % 4));
-	const bytes = new Uint8Array(binary.length);
-	for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-	return bytes;
 }
 
 function photopea_content_type(ext: string): string {

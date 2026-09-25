@@ -15,8 +15,8 @@
  * 协议细节、启用方式与自测见 docs/onlyoffice.md。
  */
 
-import { encode_path } from './r2';
-import { hex, json_response, mint_token, verify_token } from './signing';
+import { encode_path, extension_of, json_response, normalize_path } from './utils';
+import { hex, mint_token, verify_token } from './signing';
 import type { TokenPayload } from './signing';
 
 /** 签名模式下带 token 的路径前缀；index.ts 靠它决定哪些请求可以跳过 Basic 鉴权。 */
@@ -373,26 +373,6 @@ function webdav_fetch(
 async function version_key(path: string, etag: string): Promise<string> {
 	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${path}:${etag}`));
 	return hex(new Uint8Array(digest)).slice(0, 40);
-}
-
-/**
- * 规范化用户传来的 path：去掉前导斜杠、拒绝目录与 `..`。
- *
- * 注意 URLSearchParams 已经把百分号编码解开了，这里拿到的是真实文件名（与 R2 key 一致）。
- */
-function normalize_path(input: string | null): string | null {
-	if (input === null) return null;
-	const path = input.trim().replace(/^\/+/, '');
-	if (path === '' || path.endsWith('/')) return null;
-	if (path.split('/').includes('..')) return null;
-	if (path.length > 900) return null;
-	return path;
-}
-
-function extension_of(path: string): string {
-	const name = path.slice(path.lastIndexOf('/') + 1);
-	const dot = name.lastIndexOf('.');
-	return dot === -1 ? '' : name.slice(dot + 1).toLowerCase();
 }
 
 /**
