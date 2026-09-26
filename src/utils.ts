@@ -201,3 +201,96 @@ export function log_warn(event: string, fields?: LogFields): void {
 export function log_error(event: string, fields?: LogFields): void {
 	emit('error', event, fields);
 }
+
+// ===========================================================================
+// 签名短链原语（原 signing.ts）：token 签发 / 校验
+// ===========================================================================
+
+/**
+ * 与具体服务无关：drawio、Photopea、ONLYOFFICE 共用同一套短链和同一个
+ * `SIGNING_SECRET`。上面的 base64url 编解码就是为这里的 token 两段式编码服务的。
+ */
+
+/** 短链方向：read 只能取文件，write 只能覆盖写回。 */
+export type TokenMode = 'read' | 'write';
+
+export type TokenPayload = {
+	/** R2 key，不带前导斜杠 */
+	path: string;
+	mode: TokenMode;
+	/** 过期时间（秒） */
+	expires: number;
+	/** 版本 key（编辑器用它判断要不要重新下载）：同一版本稳定、内容一变就变 */
+	key: string;
+	/** 文件名，用于 Content-Disposition 与调试 */
+	title: string;
+};
+
+export async function mint_token(secret: string, payload: TokenPayload): Promise<string> {
+	const body = base64url_encode(new TextEncoder().encode(JSON.stringify(payload)));
+	const signature = await crypto.subtle.sign('HMAC', await hmac_key(secret), new TextEncoder().encode(body));
+	return `${body}.${base64url_encode(new Uint8Array(signature))}`;
+}
+
+/** 校验签名、方向与过期时间。签名比较交给 crypto.subtle.verify（恒定时间）。 */
+export async function verify_token(secret: string, token: string, mode: TokenMode): Promise<TokenPayload | null> {
+	const dot = token.lastIndexOf('.');
+	if (dot <= 0) {
+		return null;
+	}
+	const body = token.slice(0, dot);
+	const signature = base64_to_bytes(token.slice(dot + 1));
+	if (signature === null) {
+		return null;
+	}
+	const valid = await crypto.subtle.verify('HMAC', await hmac_key(secret), signature, new TextEncoder().encode(body));
+	if (!valid) {
+		return null;
+	}
+
+	const raw = base64_to_bytes(body);
+	if (raw === null) {
+		return null;
+	}
+	let payload: TokenPayload;
+	try {
+		payload = JSON.parse(new TextDecoder().decode(raw)) as TokenPayload;
+	} catch {
+		return null;
+	}
+	if (payload.mode !== mode) return null;
+	if (!Number.isFinite(payload.expires) || payload.expires <= 0 || payload.expires * 1000 <= Date.now()) return null;
+	if (typeof payload.path !== 'string' || payload.path === '') return null;
+	return payload;
+}
+
+/**
+ * CryptoKey 缓存。
+ *
+ * 同一 isolate 内会反复用到同一把密钥，而 importKey 是异步的、每次请求都做一遍纯属浪费。
+ * 按 secret 缓存 promise，重复请求直接复用。
+ */
+const key_cache = new Map<string, Promise<CryptoKey>>();
+
+function hmac_key(secret: string): Promise<CryptoKey> {
+	let cached = key_cache.get(secret);
+	if (cached === undefined) {
+		cached = crypto.subtle.importKey(
+			'raw',
+			new TextEncoder().encode(secret),
+			{ name: 'HMAC', hash: 'SHA-256' },
+			false,
+			['sign', 'verify'],
+		);
+		key_cache.set(secret, cached);
+		// 失败的 promise 不能留在缓存里，否则同一 secret 的后续请求会一直被污染
+		void cached.catch(() => {
+			if (key_cache.get(secret) === cached) key_cache.delete(secret);
+		});
+	}
+	return cached;
+}
+
+export function hex(bytes: Uint8Array): string {
+	return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
