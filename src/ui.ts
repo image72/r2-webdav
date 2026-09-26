@@ -5,11 +5,11 @@
  * 协议实现（PROPFIND/PUT/COPY…）全部留在 webdav.ts，两边互不引用。
  */
 
-import { decode_path, is_os_metadata_key, listDir } from './r2';
+import { decode_path, is_os_metadata_key, listDir } from './webdav';
 import { encode_path } from './utils';
 import PAGE_HTML from './index.html';
-import ARCHIVE_JS from './archive.client.js';
-import EDITORS_JS from './editors.client.js';
+import ARCHIVE_JS from './_app/archive.client.js';
+import EDITORS_JS from './_app/editors.client.js';
 // Default pack is inlined into the page (no extra request, no flash); the rest are
 // served on demand from LOCALE_ASSET_PATH.
 import en from './locales/en.json';
@@ -22,9 +22,10 @@ export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
  *
  * 放 `_app/` 前缀下是为了和用户数据分开 —— 这是个代码路由，R2 里并没有同名对象。
  * 不能用相对路径：页面本身是挂在任意集合路径上的（`/sub/` 也返回这个页面）。
+ * 源文件住在 `src/_app/`，与 URL 前缀一一对应。
  */
 export const ARCHIVE_ASSET_PATH = '/_app/archive.client.js';
-/** 外部编辑器（draw.io / Photopea）列表页脚本：分派 window.open + drawio opener 协议。 */
+/** 在线编辑器（ONLYOFFICE/draw.io/Photopea 入口 + 新建 Office 文档）列表页脚本。 */
 export const EDITORS_ASSET_PATH = '/_app/editors.client.js';
 
 /** On-demand locale packs, e.g. /_app/locales/zh.json. en is inlined in the page instead. */

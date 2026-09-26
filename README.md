@@ -6,6 +6,7 @@
 
 - **WebDAV**（DAV class 1, 2）：macOS Finder、rclone、各类 WebDAV 客户端都能直接挂载（本项目主要在 macOS Finder 上实测）
 - **自带界面**：不装任何客户端也能浏览、上传、预览、编辑、打包；手机上就是一套顺手的文件管理器
+- **在线编辑**：Word / Excel / PowerPoint 在线创建与编辑（ONLYOFFICE）、draw.io 图表、Photopea 修图 —— 改完直接存回 R2
 - **没有常驻服务器**：整个服务跑在一个 Cloudflare Worker 上，文件存在 R2
 
 > 改造自 [abersheeran/r2-webdav](https://github.com/abersheeran/r2-webdav)：协议层在此基础上修掉了大量互操作与数据完整性问题（逐条记录见 [docs/webdav-fix-list.md](docs/webdav-fix-list.md)），浏览器界面是重写的。上游仓库未声明许可证，如需再分发请自行确认。
@@ -18,6 +19,7 @@
   <img src="docs/screenshots/browse-mobile.png" width="220" alt="目录列表：目录优先，图标按类型着色">
   <img src="docs/screenshots/actions-mobile.png" width="220" alt="长按弹出的操作面板">
   <img src="docs/screenshots/editor-preview-mobile.png" width="220" alt="在编辑器里直接查看 Markdown 渲染效果">
+	<img src="docs/screenshots/actions-sheet-new.png" width="220">
 </p>
 <p align="center"><sub>目录列表 · 长按弹出操作面板 · 编辑器里直接「查看」渲染效果（表格、代码块、mermaid 都会渲染）</sub></p>
 
@@ -25,17 +27,18 @@
 
 ### 浏览器界面
 
-| 分组   | 能力                                                                                                                      |
-| ------ | ------------------------------------------------------------------------------------------------------------------------- |
-| 浏览   | 目录列表（目录优先、按类型着色）、面包屑、成员过多时明确提示而不是静默截断                                                |
-| 上传   | 多选 / 拖拽整批上传；重名先问一次再覆盖；**同名目录直接拒绝**（目录的标记对象一旦被文件顶掉，里面的内容就会从列表里消失） |
-| 新建   | 新建目录、新建文本文件；默认名自动避让已有条目，不会第二次就撞名                                                          |
-| 整理   | 点标题改名（同目录 `MOVE`，显式 `Overwrite: F`，不会顺手删掉同名目标）、删除前二次确认                                    |
-| 预览   | 图片 / 视频 / 音频 / 文本 / Markdown（markdown-it + mermaid）                                                             |
-| 编辑   | 文本与 Markdown；编辑器里可直接「查看」渲染效果 —— 改一改、看一眼、再改，不必先保存；未保存时有标记                       |
-| 打包   | 「压缩下载」在浏览器里打 zip 直接给你；「压缩为 zip」在当前目录生成真实的 `.zip` 对象；zip「解压」到同名目录              |
-| 手势   | 长按（桌面端右键）弹出操作面板；操作带触感反馈                                                                            |
-| 长任务 | 打包 / 解压有进度、随时可取消；失败或取消会把半成品清掉，不留垃圾对象                                                     |
+| 分组     | 能力                                                                                                                                                                                                                             |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 浏览     | 目录列表（目录优先、按类型着色）、面包屑、成员过多时明确提示而不是静默截断                                                                                                                                                       |
+| 上传     | 多选 / 拖拽整批上传；重名先问一次再覆盖；**同名目录直接拒绝**（目录的标记对象一旦被文件顶掉，里面的内容就会从列表里消失）                                                                                                        |
+| 新建     | 新建目录、新建文本文件；**一键新建空白 Word / Excel / PowerPoint**（内置模板，创建后直接进 ONLYOFFICE 编辑）；默认名自动避让已有条目，不会第二次就撞名                                                                           |
+| 整理     | 点标题改名（同目录 `MOVE`，显式 `Overwrite: F`，不会顺手删掉同名目标）、删除前二次确认                                                                                                                                           |
+| 预览     | 图片 / 视频 / 音频 / 文本 / Markdown（markdown-it + mermaid）                                                                                                                                                                    |
+| 编辑     | 文本与 Markdown；编辑器里可直接「查看」渲染效果 —— 改一改、看一眼、再改，不必先保存；未保存时有标记                                                                                                                              |
+| 在线编辑 | 配好编辑器地址后，长按菜单里出现对应入口：**ONLYOFFICE** 编辑 docx / xlsx / pptx（含从模板新建）、**draw.io** 画图（.drawio / .xml）、**Photopea** 修图（psd / png / jpg / svg…）；改完直接存回，见[在线编辑器](#可选在线编辑器) |
+| 打包     | 「压缩下载」在浏览器里打 zip 直接给你；「压缩为 zip」在当前目录生成真实的 `.zip` 对象；zip「解压」到同名目录                                                                                                                     |
+| 手势     | 长按（桌面端右键）弹出操作面板；操作带触感反馈                                                                                                                                                                                   |
+| 长任务   | 打包 / 解压有进度、随时可取消；失败或取消会把半成品清掉，不留垃圾对象                                                                                                                                                            |
 
 <details>
 <summary><h3>WebDAV 层：协议实现细节</h3></summary>
@@ -122,15 +125,11 @@ npm run deploy # = wrangler deploy
 
 ### 部署时容易踩的坑
 
-- **`[[rules]]` 的 glob 是按绝对路径匹配的**，所以只能写 `**/*.html` 这种形式。写成 `src/index.html` 永远不命中，构建时报的错是 `No matching export in "..." for import "default"`，看不出跟 glob 有关。
-- `/_app/archive.client.js` 是**代码路由**（和页面同一个 Worker，由 `src/ui.ts` 直接吐出），R2 里不能有同名 key。
-- `compatibility_flags = ["nodejs_compat"]` 和 `wrangler.toml` 里那两条 `[[rules]]` 都要保留。
-- 打包 / 解压上限 80 MB，只改 `src/archive.client.js` 里的 `ZIP_BYTE_LIMIT` 一处即可。
-- 浏览器端依赖 CDN：Alpine.js、JSZip、markdown-it、mermaid 全部从 jsdelivr 拉取；内网或离线部署需要把这些依赖一并自托管。
+部署 / 构建期的细节与常见的坑（`[[rules]]` glob 的绝对路径匹配、代码路由、CDN 依赖等）单独记在 [docs/deploy.md](docs/deploy.md)，不在这里堆。
 
 ## 可选：在线编辑器
 
-配一个在线编辑器地址，操作面板里就会出现对应的「打开」入口，直接改、直接存回：
+配一个在线编辑器地址，操作面板里就会出现对应的「打开」入口；ONLYOFFICE 配好后，「新建」面板里还会出现空白 Word / Excel / PowerPoint —— 创建后直接进编辑器。改完直接存回：
 
 ```toml
 # wrangler.toml（三个都可选，配哪个出现哪个）
@@ -145,7 +144,8 @@ npx wrangler secret put SIGNING_SECRET # ONLYOFFICE / Photopea 需要；draw.io 
 ```
 
 - **ONLYOFFICE** 用 [office-website](https://github.com/baotlake/office-website)：编辑器与
-  x2t 转换器都跑在浏览器里，不需要 Document Server。
+  x2t 转换器都跑在浏览器里，不需要 Document Server。「新建」用的空白模板
+  （docx / xlsx / pptx）打包在 `src/_app/editors.client.js` 里，随 Worker 一起分发。
 - **draw.io** / **Photopea** 直接用官方站或自建实例都行（集成走的是两家官方公开的
   接入协议，零源码改动；真人浏览器访问官方站不受其 Cloudflare 防护影响）。
 - 编辑器与 WebDAV 可以在不同域名上：跨源时打开 / 保存都靠短期签名 URL 鉴权。
@@ -154,22 +154,35 @@ npx wrangler secret put SIGNING_SECRET # ONLYOFFICE / Photopea 需要；draw.io 
 [docs/onlyoffice.md](docs/onlyoffice.md)、[docs/drawio.md](docs/drawio.md)、
 [docs/photopea.md](docs/photopea.md)。
 
+## 可选：纯 WebDAV 模式
+
+只想当挂载网盘用、不需要浏览器界面和在线编辑器：
+
+```toml
+# wrangler.toml
+[vars]
+HEADLESS = "1"
+```
+
+设为 `"1"` 后 Worker 跳过界面、编辑器与静态资源路由，所有路径只讲 WebDAV 协议 —— 浏览器打开目录看到的也是 207 multistatus XML 而不是 HTML。不设或设为其他值，行为不变。
+
 <details>
 <summary><h2>项目结构：每个文件负责什么</h2></summary>
 
 ```
-src/index.ts             Worker 入口：Basic 鉴权、CORS、请求分发
-src/webdav.ts            WebDAV 协议实现（唯一碰协议的地方）
-src/ui.ts                页面层：目录列表 JSON、预览类型判断、静态资源分发
+src/index.ts             Worker 入口：Basic 鉴权、CORS、请求分发（不含任何业务）
+src/webdav.ts            WebDAV 协议实现（唯一碰协议的地方；R2 访问工具已内置，
+                         不依赖 ui.ts / editors.ts，单独加载即可当 WebDAV server 用）
+src/ui.ts                页面层：目录列表 JSON、预览类型判断、代码路由分发
 src/index.html           整个浏览器界面（HTML + CSS + 内联 Alpine 组件）
-src/archive.client.js    浏览器端 zip 打包 / 解压（独立模块，可整个删掉，页面不受影响）
-src/archive.client.d.ts  上面那个文件的类型声明（作为 Text 模块导入需要）
-src/r2.ts                R2 访问工具：路径编解码、列表、并发控制、OS 元数据过滤
-src/onlyoffice.ts        可选：ONLYOFFICE 打开 / 保存 adapter（可整块删掉，其余代码不受影响）
-src/editors.ts           可选：draw.io / Photopea 顶层直开（可整块删掉，其余代码不受影响）
-src/editors.client.js    上面那个模块的浏览器端脚本（文本模块）
-src/signing.ts           短链签名原语（多个在线服务共用一把 SIGNING_SECRET）
+src/_app/                浏览器端脚本（URL 前缀 /_app/ 一一对应）：
+  archive.client.js        zip 打包 / 解压（独立模块，可整个删掉，页面不受影响）
+  editors.client.js        在线编辑器入口 + 新建 Office 文档（内置空白模板也在这）
+src/editors.ts           可选：三个在线编辑器的路由与 handler（ONLYOFFICE / draw.io /
+                         Photopea），可整块删掉，其余代码不受影响
+src/utils.ts             纯工具 + 结构化日志（HTTP 响应、路径、base64、签名短链、log_*）
 docs/webdav-fix-list.md  协议层的缺陷清单与修复记录
+docs/deploy.md           部署 / 构建期的细节与常见的坑
 docs/onlyoffice.md       ONLYOFFICE adapter 的协议说明、启用方式与自测
 docs/drawio.md           draw.io 集成：配置与 embed 协议
 docs/photopea.md         Photopea 集成：配置与签名短链

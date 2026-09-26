@@ -1,21 +1,16 @@
 /**
- * WebDAV 协议实现（PROPFIND / PUT / COPY / …）。
+ * WebDAV 协议实现（PROPFIND / PUT / COPY / …）—— 自包含的「R2 as WebDAV Server」。
  *
- * - 浏览器页面（列表 / 上传 / 预览）：ui.ts
- * - R2 访问工具：r2.ts
+ * 本文件只依赖 utils.ts（纯工具），单文件拎出去就是一个完整的标准 WebDAV 服务：
+ * 给它一个 R2Bucket，它提供全套标准 WebDAV HTTP endpoint（DAV class 1, 2）。
+ * 页面 / 编辑器等功能通过可选 hook 接入（见 `BrowseHandler`），不注入就是纯 WebDAV。
+ *
+ * - R2 访问工具（路径解码、目录列举、并发控制、OS 元数据过滤）已内置在本文件底部
+ * - 浏览器页面（列表 / 上传 / 预览）：ui.ts，经 `BrowseHandler` 注入
  * - Worker 入口、鉴权与路由：index.ts
  */
 
-import {
-	PERFORMANCE_CONFIG,
-	decode_path,
-	is_os_metadata_key,
-	listDir,
-	listRecursive,
-	processWithConcurrencyLimit,
-} from './r2';
 import { encode_path } from './utils';
-import { handle_browse_request } from './ui';
 
 type DavProperties = {
 	creationdate: string | undefined;
@@ -31,6 +26,44 @@ type DavProperties = {
 	ishidden: string;
 	isreadonly: string;
 };
+
+/**
+ * 目录请求的接管 hook（可选）：集合 GET（含尾斜杠的路径）交给它处理。
+ *
+ * 本项目把页面层（ui.ts 的 handle_browse_request）从这里注入，浏览器打开目录
+ * 就能看到界面。不注入时 webdav.ts 按标准 WebDAV 语义自己回 multistatus ——
+ * 单文件即是完整的 WebDAV server。
+ */
+export type BrowseHandler = (request: Request, bucket: R2Bucket) => Promise<Response>;
+
+/** 默认目录 GET：标准 WebDAV 语义 —— Depth: 0/1 的 PROPFIND 等价响应。 */
+async function webdav_default_browse(request: Request, bucket: R2Bucket): Promise<Response> {
+	const depth = request.headers.get('Depth') ?? '1';
+	if (depth !== '0' && depth !== '1') {
+		return new Response('Bad Request', { status: 400 });
+	}
+	const propfind = { mode: 'allprop' as const, names: [] as string[] };
+	const resource_path = make_resource_path(request);
+	const locks = await read_locks(bucket);
+	let page = `<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:">`;
+	// 目录 GET 的目标一定是集合（尾斜杠路径）；标记对象不存在也没关系，成员照列。
+	page += generate_propfind_response(resource_path, true, null, propfind, locks);
+	let truncated = false;
+	if (depth === '1') {
+		const listing = await listDir(bucket, resource_path === '' ? '' : `${resource_path}/`);
+		for (const entry of listing.entries) {
+			if (is_os_metadata_key(entry.key)) continue;
+			page += generate_propfind_response(entry.key, entry.is_collection, entry.object, propfind, locks);
+		}
+		truncated = listing.truncated;
+	}
+	page += '\n</multistatus>\n';
+	return new Response(page, {
+		status: 207,
+		headers: { 'Content-Type': 'text/xml', ...(truncated ? { 'X-WebDAV-Truncated': 'true' } : {}) },
+	});
+}
 
 function fromR2Object(object: R2Object | null | undefined): DavProperties {
 	if (object === null || object === undefined) {
@@ -209,8 +242,8 @@ function evaluate_conditionals(request: Request, object: R2Object): ConditionalR
 	return 'proceed';
 }
 
-async function handle_head(request: Request, bucket: R2Bucket): Promise<Response> {
-	let response = await handle_get(request, bucket);
+async function handle_head(request: Request, bucket: R2Bucket, browse: BrowseHandler): Promise<Response> {
+	let response = await handle_get(request, bucket, browse);
 	return new Response(null, {
 		status: response.status,
 		statusText: response.statusText,
@@ -230,12 +263,12 @@ function redirect_to_collection(request: Request): Response {
 	});
 }
 
-async function handle_get(request: Request, bucket: R2Bucket): Promise<Response> {
+async function handle_get(request: Request, bucket: R2Bucket, browse: BrowseHandler): Promise<Response> {
 	let resource_path = make_resource_path(request);
 
 	if (new URL(request.url).pathname.endsWith('/')) {
-		// 目录请求全权交给页面层：?format=json 返回数据，其余返回 Alpine 页面
-		return await handle_browse_request(request, bucket);
+		// 目录请求交给注入的页面层（或默认的 WebDAV 语义响应）
+		return await browse(request, bucket);
 	}
 
 	// 条件交给 evaluate_conditionals（R2 的 onlyIf 区分不出 304 / 412）。
@@ -1260,7 +1293,11 @@ export const SUPPORT_METHODS = [
 	'UNLOCK',
 ];
 
-export async function dispatch_handler(request: Request, bucket: R2Bucket): Promise<Response> {
+export async function dispatch_handler(
+	request: Request,
+	bucket: R2Bucket,
+	browse: BrowseHandler = webdav_default_browse,
+): Promise<Response> {
 	switch (request.method) {
 		case 'OPTIONS': {
 			return new Response(null, {
@@ -1272,10 +1309,10 @@ export async function dispatch_handler(request: Request, bucket: R2Bucket): Prom
 			});
 		}
 		case 'HEAD': {
-			return await handle_head(request, bucket);
+			return await handle_head(request, bucket, browse);
 		}
 		case 'GET': {
-			return await handle_get(request, bucket);
+			return await handle_get(request, bucket, browse);
 		}
 		case 'PUT': {
 			return await handle_put(request, bucket);
@@ -1314,4 +1351,186 @@ export async function dispatch_handler(request: Request, bucket: R2Bucket): Prom
 			});
 		}
 	}
+}
+
+// ===========================================================================
+// R2 访问工具（原 r2.ts）：路径解码、目录列举、并发控制、OS 元数据过滤
+// ===========================================================================
+
+/**
+ * 把请求路径里的百分号编码还原成真实文件名（RFC 3986）。
+ * 逐段解码：`%2F` 不是路径分隔符，整体解码会改变层级。
+ */
+export function decode_path(path: string): string {
+	return path
+		.split('/')
+		.map((segment) => {
+			try {
+				return decodeURIComponent(segment);
+			} catch {
+				return segment; // 非法百分号序列（如 `100%.txt`）按原样保留
+			}
+		})
+		.join('/');
+}
+
+// Performance configuration constants
+export const PERFORMANCE_CONFIG = {
+	MAX_OBJECTS_PER_REQUEST: 3000, // Limit for directory listings
+	// Cloudflare 限制每次调用最多 6 个等待响应头的连接，R2 的 list/get/put/delete/head 都算。
+	MAX_CONCURRENT_OPERATIONS: 6,
+	// R2 的 delete() 每次最多接受 1000 个 key。
+	MAX_BATCH_DELETE_SIZE: 1000,
+} as const;
+
+export type ListEntry = {
+	/** 条目的 key；目录不带尾斜杠 */
+	key: string;
+	/** 真实存在的对象；隐式目录（没有标记对象）为 null */
+	object: R2Object | null;
+	is_collection: boolean;
+};
+
+/**
+ * 列出某个前缀下的**直接**子项（等价于 WebDAV 的 Depth: 1）。
+ *
+ * R2 的 list() 只返回对象，缺标记对象的目录只出现在 `delimitedPrefixes` 里：
+ * 两种来源都要合并，隐式目录合成一条 object 为 null 的条目。
+ * 超过 max 条时 `truncated` 为 true，调用方必须把它暴露给客户端。
+ */
+export async function listDir(
+	bucket: R2Bucket,
+	prefix: string,
+	max: number = PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST,
+): Promise<{ entries: ListEntry[]; truncated: boolean }> {
+	const entries: ListEntry[] = [];
+	const seen = new Set<string>();
+	const implicit: string[] = [];
+	let cursor: string | undefined;
+
+	while (true) {
+		const page = await bucket.list({
+			prefix: prefix,
+			delimiter: '/',
+			cursor: cursor,
+			// @ts-ignore https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#r2listoptions
+			include: ['httpMetadata', 'customMetadata'],
+		});
+
+		for (const object of page.objects) {
+			seen.add(object.key);
+			entries.push({
+				key: object.key,
+				object: object,
+				is_collection: object.customMetadata?.resourcetype === '<collection />',
+			});
+		}
+
+		// delimitedPrefixes 里的目录可能已经有标记对象（上面已收集），去重后再当作隐式目录
+		for (const delimited of page.delimitedPrefixes ?? []) {
+			const key = delimited.endsWith('/') ? delimited.slice(0, -1) : delimited;
+			if (!seen.has(key)) {
+				implicit.push(key);
+			}
+		}
+
+		cursor = page.truncated ? page.cursor : undefined;
+		if (cursor === undefined || entries.length + implicit.length >= max) {
+			break;
+		}
+	}
+
+	let truncated = cursor !== undefined;
+	for (const key of implicit) {
+		if (entries.length >= max) {
+			truncated = true;
+			break;
+		}
+		entries.push({ key: key, object: null, is_collection: true });
+	}
+	if (entries.length > max) {
+		entries.length = max;
+		truncated = true;
+	}
+
+	return { entries, truncated };
+}
+
+/**
+ * 递归列出某个前缀下的**所有**对象（等价于 WebDAV 的 Depth: infinity）。
+ *
+ * 返回 `truncated` 强制调用方显式处理"还有更多"的情况：旧实现是静默停在 3000 条，
+ * COPY/MOVE 因此会"成功"地只处理一部分，把其余对象丢掉或留成孤儿。
+ */
+export async function listRecursive(
+	bucket: R2Bucket,
+	prefix: string,
+	max: number = PERFORMANCE_CONFIG.MAX_OBJECTS_PER_REQUEST,
+): Promise<{ objects: R2Object[]; truncated: boolean }> {
+	const objects: R2Object[] = [];
+	let cursor: string | undefined;
+
+	while (true) {
+		const page = await bucket.list({
+			prefix: prefix,
+			cursor: cursor,
+			// @ts-ignore https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#r2listoptions
+			include: ['httpMetadata', 'customMetadata'],
+		});
+
+		objects.push(...page.objects);
+		cursor = page.truncated ? page.cursor : undefined;
+
+		// 多取一条用于判断"是否还有更多"，下面再裁掉
+		if (objects.length > max) {
+			break;
+		}
+		if (cursor === undefined) {
+			break;
+		}
+	}
+
+	const truncated = objects.length > max || cursor !== undefined;
+	if (objects.length > max) {
+		objects.length = max;
+	}
+	return { objects, truncated };
+}
+
+// Utility function to process promises with concurrency limit
+export async function processWithConcurrencyLimit<T>(
+	items: T[],
+	processor: (item: T) => Promise<void>,
+	concurrencyLimit: number = PERFORMANCE_CONFIG.MAX_CONCURRENT_OPERATIONS,
+): Promise<void> {
+	for (let i = 0; i < items.length; i += concurrencyLimit) {
+		// 按批 await：批内并行受平台 6 连接上限约束，超出部分会排队
+		await Promise.all(items.slice(i, i + concurrencyLimit).map(processor));
+	}
+}
+
+/**
+ * macOS 通过 WebDAV 挂载点写文件时，会顺带产生一批“影子”对象：
+ *   - `._xxx`：AppleDouble，存 resource fork / 扩展属性，每个上传的文件都会配一个
+ *   - `.DS_Store` / `.Spotlight-V100` 等：Finder 与 Spotlight 的目录元数据
+ * 这些对用户没有意义，只会在存储里悄悄堆积，因此上传层丢弃、列表层隐藏。
+ */
+const MACOS_METADATA_NAMES = new Set([
+	'.DS_Store',
+	'.AppleDouble',
+	'.Spotlight-V100',
+	'.Trashes',
+	'.fseventsd',
+	'.TemporaryItems',
+	'.DocumentRevisions-V100',
+	'.VolumeIcon.icns',
+	'.apdisk',
+	'Network Trash Folder',
+	'Temporary Items',
+]);
+
+/** 是否为操作系统生成的元数据文件；只看最后一段名字，所以任意层级都生效。 */
+export function is_os_metadata_key(key: string): boolean {
+	const name = key.slice(key.lastIndexOf('/') + 1);
+	return name.startsWith('._') || MACOS_METADATA_NAMES.has(name);
 }

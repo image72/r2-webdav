@@ -284,6 +284,18 @@
 				--tone: #94a3b8;
 				--tone-soft: #f8fafc;
 			}
+			/* Office 文件：实心彩色图标自带颜色，去掉浅底容器、图标略放大 */
+			.row__icon--word,
+			.row__icon--excel,
+			.row__icon--powerpoint {
+				background: none;
+			}
+			.row__icon--word .icon,
+			.row__icon--excel .icon,
+			.row__icon--powerpoint .icon {
+				width: 28px;
+				height: 28px;
+			}
 			.row__text {
 				min-width: 0;
 			}
@@ -461,6 +473,48 @@
 			}
 			.sheet__item.sheet__item--muted {
 				margin-top: var(--sp-3);
+			}
+			/* CREATE DOCUMENT 区块：横排三个彩色卡片（DOC 蓝 / XLS 绿 / PPT 橙） */
+			.sheet__group {
+				padding: var(--sp-2) var(--sp-3) var(--sp-1);
+			}
+			.sheet__group-title {
+				display: block;
+				padding: 0 0 var(--sp-2);
+				color: var(--ink-60);
+				font-size: 12px;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.sheet__office-row {
+				display: grid;
+				grid-template-columns: repeat(3, 1fr);
+				gap: var(--sp-2);
+			}
+			.sheet__office-tile {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: var(--sp-2);
+				padding: var(--sp-3) var(--sp-2);
+				border: 1px solid var(--line);
+				border-radius: var(--r-md);
+				background: var(--surface);
+				cursor: pointer;
+			}
+			.sheet__office-tile:hover {
+				background: var(--bg);
+			}
+			.sheet__office-icon {
+				width: 36px;
+				height: 36px;
+				flex: none;
+			}
+			.sheet__office-label {
+				font-size: 13px;
+				color: var(--ink-80);
+				white-space: nowrap;
 			}
 			.sheet__actions {
 				display: flex;
@@ -1004,6 +1058,49 @@
 					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"
 				/>
 			</symbol>
+			<!-- Office 应用图标（经典彩色方块 + 白色字母），列表与 CREATE DOCUMENT 共用 -->
+			<symbol id="i-word" viewBox="0 0 24 24">
+				<rect x="2" y="2" width="20" height="20" rx="5" fill="#185abd" />
+				<text
+					x="12"
+					y="16.6"
+					text-anchor="middle"
+					font-size="12"
+					font-weight="700"
+					fill="#ffffff"
+					font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+				>
+					W
+				</text>
+			</symbol>
+			<symbol id="i-excel" viewBox="0 0 24 24">
+				<rect x="2" y="2" width="20" height="20" rx="5" fill="#107c41" />
+				<text
+					x="12"
+					y="16.6"
+					text-anchor="middle"
+					font-size="12"
+					font-weight="700"
+					fill="#ffffff"
+					font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+				>
+					X
+				</text>
+			</symbol>
+			<symbol id="i-powerpoint" viewBox="0 0 24 24">
+				<rect x="2" y="2" width="20" height="20" rx="5" fill="#c43e1c" />
+				<text
+					x="12"
+					y="16.6"
+					text-anchor="middle"
+					font-size="12"
+					font-weight="700"
+					fill="#ffffff"
+					font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+				>
+					P
+				</text>
+			</symbol>
 			<symbol id="i-edit" viewBox="0 0 24 24">
 				<path
 					d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
@@ -1169,6 +1266,39 @@
 			<template x-if="newMenu">
 				<div id="new-menu-panel" class="sheet sheet--new open" role="dialog" aria-modal="true" aria-label="New">
 					<span class="sheet__title" x-text="t('new')"></span>
+					<!-- CREATE DOCUMENT 区块：内置模板新建 Office 文档（逻辑在 editors.client.js） -->
+					<div id="new-office-section" class="sheet__group" x-show="canCreateOffice()">
+						<span class="sheet__group-title" x-text="t('createDocument')"></span>
+						<div class="sheet__office-row">
+							<button
+								id="new-office-docx-button"
+								class="sheet__office-tile"
+								@click="createOfficeDocument('docx')"
+								aria-label="New Word document"
+							>
+								<svg class="sheet__office-icon" aria-hidden="true"><use href="#i-word"></use></svg>
+								<span class="sheet__office-label" x-text="t('newWord')"></span>
+							</button>
+							<button
+								id="new-office-xlsx-button"
+								class="sheet__office-tile"
+								@click="createOfficeDocument('xlsx')"
+								aria-label="New Excel spreadsheet"
+							>
+								<svg class="sheet__office-icon" aria-hidden="true"><use href="#i-excel"></use></svg>
+								<span class="sheet__office-label" x-text="t('newExcel')"></span>
+							</button>
+							<button
+								id="new-office-pptx-button"
+								class="sheet__office-tile"
+								@click="createOfficeDocument('pptx')"
+								aria-label="New PowerPoint presentation"
+							>
+								<svg class="sheet__office-icon" aria-hidden="true"><use href="#i-powerpoint"></use></svg>
+								<span class="sheet__office-label" x-text="t('newPowerPoint')"></span>
+							</button>
+						</div>
+					</div>
 					<button
 						id="new-upload-button"
 						class="sheet__item"
@@ -1942,7 +2072,11 @@
 						iconFor(entry) {
 							if (entry.isDir) return 'folder';
 							if (entry.kind) return entry.kind;
-							return /\.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name) ? 'archive' : 'file';
+							if (/\.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name)) return 'archive';
+							if (/\.(docx?|odt|rtf)$/i.test(entry.name)) return 'word';
+							if (/\.(xlsx?|ods|csv)$/i.test(entry.name)) return 'excel';
+							if (/\.(pptx?|odp)$/i.test(entry.name)) return 'powerpoint';
+							return 'file';
 						},
 
 						metaFor(entry) {
@@ -2167,6 +2301,38 @@
 								if (!taken.has(candidate)) return candidate;
 							}
 							return 'untitled.txt';
+						},
+
+						/** 新建 Office 文档的入口是否可用（配置齐了才显示 CREATE DOCUMENT 区块）。 */
+						canCreateOffice() {
+							return window.external_editors.canCreateOffice();
+						},
+
+						/**
+						 * 新建 Office 文档：模板与创建逻辑都在 editors.client.js；
+						 * 创建成功后走 openInOnlyOffice 同一条会话链路进编辑器。
+						 */
+						async createOfficeDocument(kind) {
+							buzz('tap');
+							this.newMenu = false;
+							try {
+								await window.external_editors.createOfficeDocument(kind, {
+									existingNames: this.entries.map((entry) => entry.name),
+									onCreated: async (created) => {
+										this.notify(this.t('fileCreated', { name: created.name }), 'done');
+										await this.load();
+										await this.openInOnlyOffice({ name: created.name, href: created.href, isDir: false });
+									},
+									onError: (msg) => this.notify(this.t('createFailed', { msg }), 'error'),
+								});
+							} catch (err) {
+								if (String(err && err.message).indexOf('exists:') === 0) {
+									this.notify(this.t('editorConflict'), 'error');
+								} else if (String(err && err.message).indexOf('onlyoffice') === -1) {
+									this.notify(this.t('createFailed', { msg: err.message }), 'error');
+								}
+								buzz('error');
+							}
 						},
 
 						openNewMenu() {
