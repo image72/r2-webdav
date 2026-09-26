@@ -12,7 +12,7 @@ fallthrough = true
 
 [[rules]]
 type = "Text"
-globs = ["**/archive.client.js", "**/editors.client.js"]
+globs = ["**/archive.client.js", "**/editors.client.js", "**/office.templates.js"]
 fallthrough = true
 
 [[r2_buckets]]

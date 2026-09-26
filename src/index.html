@@ -1004,6 +1004,22 @@
 					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"
 				/>
 			</symbol>
+			<!-- Office 新建文档图标（与文档图标同构：折角 + 底部横线/网格标识） -->
+			<symbol id="i-doc" viewBox="0 0 24 24">
+				<path
+					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"
+				/>
+			</symbol>
+			<symbol id="i-sheet" viewBox="0 0 24 24">
+				<path
+					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-2v3h-2v-3H8v-2h2v-3h2v3h2v2h-2v3h-2v-3zm-3-7V3.5L18.5 9H13z"
+				/>
+			</symbol>
+			<symbol id="i-slide" viewBox="0 0 24 24">
+				<path
+					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"
+				/>
+			</symbol>
 			<symbol id="i-edit" viewBox="0 0 24 24">
 				<path
 					d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
@@ -1169,6 +1185,35 @@
 			<template x-if="newMenu">
 				<div id="new-menu-panel" class="sheet sheet--new open" role="dialog" aria-modal="true" aria-label="New">
 					<span class="sheet__title" x-text="t('new')"></span>
+					<!-- CREATE DOCUMENT 区块：内置模板新建 Office 文档（逻辑在 editors.client.js） -->
+					<div id="new-office-section" class="sheet__group" x-show="canCreateOffice()">
+						<span class="sheet__group-title" x-text="t('createDocument')"></span>
+						<button
+							id="new-office-docx-button"
+							class="sheet__item"
+							@click="createOfficeDocument('docx')"
+							aria-label="New Word document"
+						>
+							<svg class="icon" aria-hidden="true"><use href="#i-doc"></use></svg><span x-text="t('newWord')"></span>
+						</button>
+						<button
+							id="new-office-xlsx-button"
+							class="sheet__item"
+							@click="createOfficeDocument('xlsx')"
+							aria-label="New Excel spreadsheet"
+						>
+							<svg class="icon" aria-hidden="true"><use href="#i-sheet"></use></svg><span x-text="t('newExcel')"></span>
+						</button>
+						<button
+							id="new-office-pptx-button"
+							class="sheet__item"
+							@click="createOfficeDocument('pptx')"
+							aria-label="New PowerPoint presentation"
+						>
+							<svg class="icon" aria-hidden="true"><use href="#i-slide"></use></svg
+							><span x-text="t('newPowerPoint')"></span>
+						</button>
+					</div>
 					<button
 						id="new-upload-button"
 						class="sheet__item"
@@ -2169,9 +2214,36 @@
 							return 'untitled.txt';
 						},
 
-						openNewMenu() {
+						/** 新建 Office 文档的入口是否可用（配置齐了才显示 CREATE DOCUMENT 区块）。 */
+						canCreateOffice() {
+							return window.external_editors.canCreateOffice();
+						},
+
+						/**
+						 * 新建 Office 文档：模板与创建逻辑都在 editors.client.js；
+						 * 创建成功后走 openInOnlyOffice 同一条会话链路进编辑器。
+						 */
+						async createOfficeDocument(kind) {
 							buzz('tap');
-							this.newMenu = true;
+							this.newMenu = false;
+							try {
+								await window.external_editors.createOfficeDocument(kind, {
+									existingNames: this.entries.map((entry) => entry.name),
+									onCreated: async (created) => {
+										this.notify(this.t('fileCreated', { name: created.name }), 'done');
+										await this.load();
+										await this.openInOnlyOffice({ name: created.name, href: created.href, isDir: false });
+									},
+									onError: (msg) => this.notify(this.t('createFailed', { msg }), 'error'),
+								});
+							} catch (err) {
+								if (String(err && err.message).indexOf('exists:') === 0) {
+									this.notify(this.t('editorConflict'), 'error');
+								} else if (String(err && err.message).indexOf('onlyoffice') === -1) {
+									this.notify(this.t('createFailed', { msg: err.message }), 'error');
+								}
+								buzz('error');
+							}
 						},
 
 						openFolder() {
@@ -2690,6 +2762,7 @@
 			})();
 		</script>
 		<script defer src="/_app/archive.client.js"></script>
+		<script defer src="/_app/office.templates.js"></script>
 		<script defer src="/_app/editors.client.js"></script>
 		<script
 			defer

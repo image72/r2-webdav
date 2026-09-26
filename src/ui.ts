@@ -10,6 +10,7 @@ import { encode_path } from './utils';
 import PAGE_HTML from './index.html';
 import ARCHIVE_JS from './archive.client.js';
 import EDITORS_JS from './editors.client.js';
+import OFFICE_TEMPLATES_JS from './office.templates.js';
 // Default pack is inlined into the page (no extra request, no flash); the rest are
 // served on demand from LOCALE_ASSET_PATH.
 import en from './locales/en.json';
@@ -26,6 +27,8 @@ export type PreviewKind = 'markdown' | 'text' | 'image' | 'video' | 'audio';
 export const ARCHIVE_ASSET_PATH = '/_app/archive.client.js';
 /** 外部编辑器（draw.io / Photopea）列表页脚本：分派 window.open + drawio opener 协议。 */
 export const EDITORS_ASSET_PATH = '/_app/editors.client.js';
+/** Office 空文档模板（base64），被 editors.client.js 用来 PUT 新建文档。 */
+export const OFFICE_TEMPLATES_ASSET_PATH = '/_app/office.templates.js';
 
 /** On-demand locale packs, e.g. /_app/locales/zh.json. en is inlined in the page instead. */
 const LOCALES: Record<string, unknown> = { en, zh };
@@ -56,6 +59,9 @@ export function handle_asset_request(request: Request): Response | null {
 	}
 	if (pathname === EDITORS_ASSET_PATH) {
 		return handle_assets(request, EDITORS_JS);
+	}
+	if (pathname === OFFICE_TEMPLATES_ASSET_PATH) {
+		return handle_assets(request, OFFICE_TEMPLATES_JS);
 	}
 	if (pathname.startsWith(LOCALE_ASSET_PREFIX)) {
 		const code = pathname.slice(LOCALE_ASSET_PREFIX.length).replace(/\.json$/, '');

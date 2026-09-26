@@ -15,19 +15,19 @@ r2-webdav 依赖 [office-website](../../../office-website) 编辑器页接受 `?
   `git am patches/office-website-save-to-storage.patch`（从 r2-webdav 目录拷过去跑）
 - 内容 = 2 个提交：
 
-| 提交 | 主题 | 改动 |
-| ---- | ---- | ---- |
-| `a73cecc` | feat: save back to storage via saveUrl query param | `server.ts` / `page.tsx` / `_headers` |
-| `0894bf9` | fix: save-to-storage is authoritative, download only as fallback | `server.ts`（保存语义修正） |
-| `4ed7dfd` | fix: revert added _headers rules, keep upstream config as-is | `public/_headers`（撤掉新增规则；`/x2t-*` 与 upstream 原有 `/x2t-*` 通配叠加产生 `content-encoding: br, br`，导致 x2t 解压失败 → 打开报错、保存卡 Downloading document） |
+| 提交      | 主题                                                             | 改动                                                                                                                                                                     |
+| --------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `a73cecc` | feat: save back to storage via saveUrl query param               | `server.ts` / `page.tsx` / `_headers`                                                                                                                                    |
+| `0894bf9` | fix: save-to-storage is authoritative, download only as fallback | `server.ts`（保存语义修正）                                                                                                                                              |
+| `4ed7dfd` | fix: revert added \_headers rules, keep upstream config as-is    | `public/_headers`（撤掉新增规则；`/x2t-*` 与 upstream 原有 `/x2t-*` 通配叠加产生 `content-encoding: br, br`，导致 x2t 解压失败 → 打开报错、保存卡 Downloading document） |
 
 ### 涉及文件与「侵入面」
 
-| 文件 | 改动 | 对上游行为的影响 |
-| ---- | ---- | ---------------- |
+| 文件                     | 改动                                                                                                                  | 对上游行为的影响                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | `utils/editor/server.ts` | `openUrl` 新增可选 `saveUrl` 参数 + `getSaveError()`；`downloadas` 分支：有 `saveUrl` 时 PUT 回写、失败才退回本地下载 | **不传 `saveUrl` 时与 upstream 完全一致**（所有新参数可选、新分支不触发） |
-| `app/editor/page.tsx` | 读 `?saveUrl=` query 并传给 `server.openUrl`；`onSave` 事件里读 `getSaveError()` 用 `showMessage` 提示回写失败 | URL 不带 `?saveUrl=` 时零影响 |
-| `public/_headers` | x2t wasm 30d 缓存 + SWR；HTML 短 TTL | 与上游功能无关，纯部署优化 |
+| `app/editor/page.tsx`    | 读 `?saveUrl=` query 并传给 `server.openUrl`；`onSave` 事件里读 `getSaveError()` 用 `showMessage` 提示回写失败        | URL 不带 `?saveUrl=` 时零影响                                             |
+| `public/_headers`        | x2t wasm 30d 缓存 + SWR；HTML 短 TTL                                                                                  | 与上游功能无关，纯部署优化                                                |
 
 ### 兼容性要点
 

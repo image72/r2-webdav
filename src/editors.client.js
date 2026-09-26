@@ -7,8 +7,10 @@
  *   - Photopea：先要签名会话（服务端发读/写短链），再 window.open 到
  *     `pp实例/#<JSON>`；PP 自己拉文件、自己把保存的字节 POST 回我们的写端点。
  *     本页对 PP **零 postMessage**。
+ *   - 新建 Office 文档：用内置空模板（office.templates.js）PUT 创建文件，
+ *     成功后走 ONLYOFFICE 会话直接进编辑器。
  *
- * 两个实例都是官方原版、零修改。
+ * 实例都是官方原版、零修改。
  */
 (function () {
 	'use strict';
@@ -21,6 +23,8 @@
 		ext_of: extension_of,
 		canOpenInExternal: canOpenInExternal,
 		openExternal: openExternal,
+		canCreateOffice: canCreateOffice,
+		createOfficeDocument: createOfficeDocument,
 	};
 
 	if (typeof window !== 'undefined') {
@@ -56,6 +60,87 @@
 	function openExternal(entry, editor, hooks) {
 		if (editor.id === 'drawio') return open_drawio(entry, editor, hooks || {});
 		if (editor.id === 'photopea') return open_photopea(entry, editor, hooks || {});
+	}
+
+	// -----------------------------------------------------------------------
+	// 新建 Office 文档：内置模板 + ONLYOFFICE 直开
+	// -----------------------------------------------------------------------
+
+	/*
+	 * kind ∈ {docx, xlsx, pptx}（与 office.templates.js 的键一致）。
+	 * 流程：
+	 *   1. 在当前目录挑一个不冲突的名字（先本地 entries，再 HEAD 探测兜底）；
+	 *   2. 模板 base64 → 字节，PUT 到当前目录；
+	 *   3. 调 hooks.onCreated({ name, href }) 让宿主走 openInOnlyOffice 同一条
+	 *      会话链路进编辑器 —— 打开/保存复用现有短链通道，这里不重复实现。
+	 * ONLYOFFICE 未配置（__APP_CONFIG__.onlyoffice 为 null）时不给创建入口：
+	 * 造出来的文件没法编辑，只会变成无法打开的空壳。
+	 */
+	var OFFICE_KINDS = ['docx', 'xlsx', 'pptx'];
+	var OFFICE_LABELS = { docx: 'docx', xlsx: 'xlsx', pptx: 'pptx' };
+
+	function canCreateOffice() {
+		return Boolean(
+			window.__APP_CONFIG__ &&
+				window.__APP_CONFIG__.onlyoffice &&
+				typeof window.office_templates === 'object' &&
+				window.office_templates !== null,
+		);
+	}
+
+	/** 在 taken（Set）里挑一个不冲突的名字，和 index.html 的 default_new_name 同策略。 */
+	function pick_name(base, ext, taken) {
+		if (!taken.has(base + '.' + ext)) return base + '.' + ext;
+		for (var index = 2; index < 1000; index++) {
+			var candidate = base + '-' + index + '.' + ext;
+			if (!taken.has(candidate)) return candidate;
+		}
+		return base + '.' + ext;
+	}
+
+	function base64_to_bytes(b64) {
+		var bin = atob(b64);
+		var bytes = new Uint8Array(bin.length);
+		for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+		return bytes;
+	}
+
+	/**
+	 * 创建空 Office 文档并（经回调）打开编辑器。
+	 * @param {string} kind docx | xlsx | pptx
+	 * @param {object} hooks { existingNames: string[], onCreated(entry), onError(msg), notify(key, data) }
+	 */
+	function createOfficeDocument(kind, hooks) {
+		hooks = hooks || {};
+		if (OFFICE_KINDS.indexOf(kind) === -1) return Promise.reject(new Error('bad kind: ' + kind));
+		if (!canCreateOffice()) {
+			if (hooks.notify) hooks.notify('onlyofficeUnavailable');
+			return Promise.reject(new Error('onlyoffice not configured'));
+		}
+
+		var base = kind === 'docx' ? 'Document' : kind === 'xlsx' ? 'Spreadsheet' : 'Presentation';
+		var name = pick_name(base, kind, new Set(hooks.existingNames || []));
+		var href = location.pathname + encodeURIComponent(name);
+		var bytes = base64_to_bytes(window.office_templates[kind]);
+
+		return fetch(href, { method: 'HEAD', credentials: 'include' })
+			.then(function (probe) {
+				// 本地名单之外的冲突（例如别的标签页刚建的）这里兜底拦下。
+				if (probe.ok) throw new Error('exists: ' + name);
+			})
+			.then(function () {
+				return fetch(href, {
+					method: 'PUT',
+					credentials: 'include',
+					headers: { 'Content-Type': 'application/octet-stream' },
+					body: bytes,
+				});
+			})
+			.then(function (resp) {
+				if (!resp.ok) throw new Error('PUT ' + resp.status + ' ' + resp.statusText);
+				if (hooks.onCreated) hooks.onCreated({ name: name, href: href });
+				return { name: name, href: href };
+			});
 	}
 
 	// -----------------------------------------------------------------------
