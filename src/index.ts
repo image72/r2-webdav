@@ -1,15 +1,14 @@
 /**
  * Worker 入口：鉴权、CORS 与请求分发。本文件只做编排，不含任何具体业务 ——
  *
- *   WebDAV 协议（PROPFIND/PUT/COPY/…）        webdav.ts
- *   页面与代码路由、目录数据                    ui.ts
- *   在线编辑器（ONLYOFFICE/draw.io/Photopea）  editors.ts —— 三者的 path 与 handler 全在该模块
- *   短链签名原语                              signing.ts
- *   纯工具 + 结构化日志                        utils.ts
+ *   WebDAV 协议（PROPFIND/PUT/COPY/…，自包含，R2 访问工具已内置）    webdav.ts
+ *   页面与代码路由、目录数据（经 BrowseHandler 注入 webdav 层）      ui.ts
+ *   在线编辑器（ONLYOFFICE/draw.io/Photopea）的 path 与 handler      editors.ts
+ *   纯工具 + 签名短链 + 结构化日志                                  utils.ts
  */
 
 import { SUPPORT_METHODS, dispatch_handler } from './webdav';
-import { handle_asset_request } from './ui';
+import { handle_asset_request, handle_browse_request } from './ui';
 import { log_info, log_warn, token_hint } from './utils';
 import { handle_editors_request, is_token_request, page_config } from './editors';
 import type { EditorsEnv, WebdavTransport } from './editors';
@@ -21,6 +20,9 @@ export interface Env extends EditorsEnv {
 	// Variables defined in the "Environment Variables" section of the Wrangler CLI or dashboard
 	USERNAME: string;
 	PASSWORD: string;
+
+	// 设为 "1" 进入纯 WebDAV 模式：跳过界面、在线编辑器与静态资源路由，见 README
+	HEADLESS?: string;
 }
 
 function is_authorized(authorization_header: string, username: string, password: string): boolean {
@@ -57,8 +59,10 @@ export default {
 		// 签名模式（配了 SIGNING_SECRET）下跳过 Basic：调用方是浏览器里的在线服务，
 		// 跨源带不了凭据，由 URL 里的 HMAC token 负责校验。直连模式没有这些路由。
 		// 哪些路径算 token 路由，只有 editors.ts 知道 —— 入口不做路径白名单。
+		// headless 模式没有编辑器，自然也没有 token 路由。
+		const headless = env.HEADLESS === '1';
 		const pathname = new URL(request.url).pathname;
-		const token_request = is_token_request(pathname, env);
+		const token_request = !headless && is_token_request(pathname, env);
 		if (
 			request.method !== 'OPTIONS' &&
 			!token_request &&
@@ -74,21 +78,28 @@ export default {
 			});
 		}
 
-		// adapter 的读写走下面这个注入的「WebDAV 协议层」函数，**进程内调用**：
-		// 不能让它 fetch 自己的 hostname，生产环境 Worker 自调用会被平台拦掉（404 + 1042）。
-		const webdav_transport: WebdavTransport = (req) => dispatch_handler(req, bucket);
+		let response: Response;
+		if (headless) {
+			// 纯 WebDAV 模式：不注入 browse hook，目录 GET 走 webdav.ts 的默认 207 multistatus。
+			response = await dispatch_handler(request, bucket);
+		} else {
+			// adapter 的读写走下面这个注入的「WebDAV 协议层」函数，**进程内调用**：
+			// 不能让它 fetch 自己的 hostname，生产环境 Worker 自调用会被平台拦掉（404 + 1042）。
+			// 浏览器目录请求经 handle_browse_request 注入 webdav 层（ui.ts 只在这里接线）。
+			const webdav_transport: WebdavTransport = (req) => dispatch_handler(req, bucket, handle_browse_request);
 
-		// 在线编辑器（/onlyoffice/*、/editors/*）不认识就返回 null，逐层落下去。
-		let response: Response =
-			(await handle_editors_request(request, env, webdav_transport)) ??
-			handle_asset_request(request) ??
-			(await dispatch_handler(request, bucket));
+			// 在线编辑器（/onlyoffice/*、/editors/*）不认识就返回 null，逐层落下去。
+			response =
+				(await handle_editors_request(request, env, webdav_transport)) ??
+				handle_asset_request(request) ??
+				(await dispatch_handler(request, bucket, handle_browse_request));
 
-		// 页面里的「在线编辑」入口需要编辑器地址与放行的扩展名；配置的拼装在 editors.ts，
-		// 都没开就返回 null，不注入任何东西。
-		const config = page_config(env, request);
-		if (config !== null && (response.headers.get('Content-Type') ?? '').startsWith('text/html')) {
-			response = inject_page_config(response, config);
+			// 页面里的「在线编辑」入口需要编辑器地址与放行的扩展名；配置的拼装在 editors.ts，
+			// 都没开就返回 null，不注入任何东西。
+			const config = page_config(env, request);
+			if (config !== null && (response.headers.get('Content-Type') ?? '').startsWith('text/html')) {
+				response = inject_page_config(response, config);
+			}
 		}
 
 		// Set CORS headers

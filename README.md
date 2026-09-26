@@ -145,7 +145,7 @@ npx wrangler secret put SIGNING_SECRET # ONLYOFFICE / Photopea 需要；draw.io 
 
 - **ONLYOFFICE** 用 [office-website](https://github.com/baotlake/office-website)：编辑器与
   x2t 转换器都跑在浏览器里，不需要 Document Server。「新建」用的空白模板
-  （docx / xlsx / pptx）打包在 `src/office.templates.js` 里，随 Worker 一起分发。
+  （docx / xlsx / pptx）打包在 `src/_app/editors.client.js` 里，随 Worker 一起分发。
 - **draw.io** / **Photopea** 直接用官方站或自建实例都行（集成走的是两家官方公开的
   接入协议，零源码改动；真人浏览器访问官方站不受其 Cloudflare 防护影响）。
 - 编辑器与 WebDAV 可以在不同域名上：跨源时打开 / 保存都靠短期签名 URL 鉴权。
@@ -154,22 +154,33 @@ npx wrangler secret put SIGNING_SECRET # ONLYOFFICE / Photopea 需要；draw.io 
 [docs/onlyoffice.md](docs/onlyoffice.md)、[docs/drawio.md](docs/drawio.md)、
 [docs/photopea.md](docs/photopea.md)。
 
+## 可选：纯 WebDAV 模式
+
+只想当挂载网盘用、不需要浏览器界面和在线编辑器：
+
+```toml
+# wrangler.toml
+[vars]
+HEADLESS = "1"
+```
+
+设为 `"1"` 后 Worker 跳过界面、编辑器与静态资源路由，所有路径只讲 WebDAV 协议 —— 浏览器打开目录看到的也是 207 multistatus XML 而不是 HTML。不设或设为其他值，行为不变。
+
 <details>
 <summary><h2>项目结构：每个文件负责什么</h2></summary>
 
 ```
 src/index.ts             Worker 入口：Basic 鉴权、CORS、请求分发（不含任何业务）
-src/webdav.ts            WebDAV 协议实现（唯一碰协议的地方）
+src/webdav.ts            WebDAV 协议实现（唯一碰协议的地方；R2 访问工具已内置，
+                         不依赖 ui.ts / editors.ts，单独加载即可当 WebDAV server 用）
 src/ui.ts                页面层：目录列表 JSON、预览类型判断、代码路由分发
 src/index.html           整个浏览器界面（HTML + CSS + 内联 Alpine 组件）
 src/_app/                浏览器端脚本（URL 前缀 /_app/ 一一对应）：
   archive.client.js        zip 打包 / 解压（独立模块，可整个删掉，页面不受影响）
   editors.client.js        在线编辑器入口 + 新建 Office 文档（内置空白模板也在这）
-src/r2.ts                R2 访问工具：路径编解码、列表、并发控制、OS 元数据过滤
 src/editors.ts           可选：三个在线编辑器的路由与 handler（ONLYOFFICE / draw.io /
                          Photopea），可整块删掉，其余代码不受影响
-src/signing.ts           短链签名原语（三个编辑器共用一把 SIGNING_SECRET）
-src/utils.ts             纯工具 + 结构化日志（HTTP 响应、路径、base64、log_*）
+src/utils.ts             纯工具 + 结构化日志（HTTP 响应、路径、base64、签名短链、log_*）
 docs/webdav-fix-list.md  协议层的缺陷清单与修复记录
 docs/deploy.md           部署 / 构建期的细节与常见的坑
 docs/onlyoffice.md       ONLYOFFICE adapter 的协议说明、启用方式与自测

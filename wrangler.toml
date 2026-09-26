@@ -33,3 +33,6 @@ PHOTOPEA_EDITOR_URL = "https://photopea.image72.workers.dev/"
 
 # Optional. Online editor page for the "open in ONLYOFFICE" action; needs SIGNING_SECRET.
 # SIGNING_SECRET = "<oo-joint-test-secret>"
+
+# Optional. Set to "1" for a pure WebDAV server: no UI, no editors, no static assets.
+# HEADLESS = "1"

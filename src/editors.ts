@@ -39,15 +39,17 @@ import {
 	base64_to_bytes,
 	encode_path,
 	extension_of,
+	hex,
 	json_response,
 	log_error,
 	log_info,
 	log_warn,
+	mint_token,
 	normalize_path,
 	token_hint,
+	verify_token,
 } from './utils';
-import { hex, mint_token, verify_token } from './signing';
-import type { TokenPayload } from './signing';
+import type { TokenPayload } from './utils';
 
 // ---------------------------------------------------------------------------
 // 环境与注册表
