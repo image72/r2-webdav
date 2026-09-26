@@ -21,12 +21,6 @@
 				--accent-soft: #ecfdf5;
 				--danger: #dc2626;
 				--danger-soft: #fef2f2;
-				--doc: #185abd;
-				--doc-soft: #e8f0fe;
-				--xls: #107c41;
-				--xls-soft: #e6f4ea;
-				--ppt: #c43e1c;
-				--ppt-soft: #fce8e6;
 				--r-sm: 8px;
 				--r-md: 12px;
 				--r-lg: 16px;
@@ -290,6 +284,18 @@
 				--tone: #94a3b8;
 				--tone-soft: #f8fafc;
 			}
+			/* Office 文件：实心彩色图标自带颜色，去掉浅底容器、图标略放大 */
+			.row__icon--word,
+			.row__icon--excel,
+			.row__icon--powerpoint {
+				background: none;
+			}
+			.row__icon--word .icon,
+			.row__icon--excel .icon,
+			.row__icon--powerpoint .icon {
+				width: 28px;
+				height: 28px;
+			}
 			.row__text {
 				min-width: 0;
 			}
@@ -500,28 +506,10 @@
 			.sheet__office-tile:hover {
 				background: var(--bg);
 			}
-			.sheet__office-badge {
-				display: flex;
-				align-items: center;
-				justify-content: center;
-				width: 44px;
-				height: 44px;
-				border-radius: var(--r-md);
-				font-size: 13px;
-				font-weight: 700;
-				letter-spacing: 0.02em;
-			}
-			.sheet__office-badge--doc {
-				background: var(--doc-soft);
-				color: var(--doc);
-			}
-			.sheet__office-badge--xls {
-				background: var(--xls-soft);
-				color: var(--xls);
-			}
-			.sheet__office-badge--ppt {
-				background: var(--ppt-soft);
-				color: var(--ppt);
+			.sheet__office-icon {
+				width: 36px;
+				height: 36px;
+				flex: none;
 			}
 			.sheet__office-label {
 				font-size: 13px;
@@ -1070,6 +1058,49 @@
 					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"
 				/>
 			</symbol>
+			<!-- Office 应用图标（经典彩色方块 + 白色字母），列表与 CREATE DOCUMENT 共用 -->
+			<symbol id="i-word" viewBox="0 0 24 24">
+				<rect x="2" y="2" width="20" height="20" rx="5" fill="#185abd" />
+				<text
+					x="12"
+					y="16.6"
+					text-anchor="middle"
+					font-size="12"
+					font-weight="700"
+					fill="#ffffff"
+					font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+				>
+					W
+				</text>
+			</symbol>
+			<symbol id="i-excel" viewBox="0 0 24 24">
+				<rect x="2" y="2" width="20" height="20" rx="5" fill="#107c41" />
+				<text
+					x="12"
+					y="16.6"
+					text-anchor="middle"
+					font-size="12"
+					font-weight="700"
+					fill="#ffffff"
+					font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+				>
+					X
+				</text>
+			</symbol>
+			<symbol id="i-powerpoint" viewBox="0 0 24 24">
+				<rect x="2" y="2" width="20" height="20" rx="5" fill="#c43e1c" />
+				<text
+					x="12"
+					y="16.6"
+					text-anchor="middle"
+					font-size="12"
+					font-weight="700"
+					fill="#ffffff"
+					font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+				>
+					P
+				</text>
+			</symbol>
 			<symbol id="i-edit" viewBox="0 0 24 24">
 				<path
 					d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
@@ -1245,7 +1276,7 @@
 								@click="createOfficeDocument('docx')"
 								aria-label="New Word document"
 							>
-								<span class="sheet__office-badge sheet__office-badge--doc">DOC</span>
+								<svg class="sheet__office-icon" aria-hidden="true"><use href="#i-word"></use></svg>
 								<span class="sheet__office-label" x-text="t('newWord')"></span>
 							</button>
 							<button
@@ -1254,7 +1285,7 @@
 								@click="createOfficeDocument('xlsx')"
 								aria-label="New Excel spreadsheet"
 							>
-								<span class="sheet__office-badge sheet__office-badge--xls">XLS</span>
+								<svg class="sheet__office-icon" aria-hidden="true"><use href="#i-excel"></use></svg>
 								<span class="sheet__office-label" x-text="t('newExcel')"></span>
 							</button>
 							<button
@@ -1263,7 +1294,7 @@
 								@click="createOfficeDocument('pptx')"
 								aria-label="New PowerPoint presentation"
 							>
-								<span class="sheet__office-badge sheet__office-badge--ppt">PPT</span>
+								<svg class="sheet__office-icon" aria-hidden="true"><use href="#i-powerpoint"></use></svg>
 								<span class="sheet__office-label" x-text="t('newPowerPoint')"></span>
 							</button>
 						</div>
@@ -2041,7 +2072,11 @@
 						iconFor(entry) {
 							if (entry.isDir) return 'folder';
 							if (entry.kind) return entry.kind;
-							return /\.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name) ? 'archive' : 'file';
+							if (/\.(zip|rar|7z|tar|gz|bz2|xz)$/i.test(entry.name)) return 'archive';
+							if (/\.(docx?|odt|rtf)$/i.test(entry.name)) return 'word';
+							if (/\.(xlsx?|ods|csv)$/i.test(entry.name)) return 'excel';
+							if (/\.(pptx?|odp)$/i.test(entry.name)) return 'powerpoint';
+							return 'file';
 						},
 
 						metaFor(entry) {
