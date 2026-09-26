@@ -21,6 +21,12 @@
 				--accent-soft: #ecfdf5;
 				--danger: #dc2626;
 				--danger-soft: #fef2f2;
+				--doc: #185abd;
+				--doc-soft: #e8f0fe;
+				--xls: #107c41;
+				--xls-soft: #e6f4ea;
+				--ppt: #c43e1c;
+				--ppt-soft: #fce8e6;
 				--r-sm: 8px;
 				--r-md: 12px;
 				--r-lg: 16px;
@@ -461,6 +467,66 @@
 			}
 			.sheet__item.sheet__item--muted {
 				margin-top: var(--sp-3);
+			}
+			/* CREATE DOCUMENT 区块：横排三个彩色卡片（DOC 蓝 / XLS 绿 / PPT 橙） */
+			.sheet__group {
+				padding: var(--sp-2) var(--sp-3) var(--sp-1);
+			}
+			.sheet__group-title {
+				display: block;
+				padding: 0 0 var(--sp-2);
+				color: var(--ink-60);
+				font-size: 12px;
+				font-weight: 600;
+				letter-spacing: 0.06em;
+				text-transform: uppercase;
+			}
+			.sheet__office-row {
+				display: grid;
+				grid-template-columns: repeat(3, 1fr);
+				gap: var(--sp-2);
+			}
+			.sheet__office-tile {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: var(--sp-2);
+				padding: var(--sp-3) var(--sp-2);
+				border: 1px solid var(--line);
+				border-radius: var(--r-md);
+				background: var(--surface);
+				cursor: pointer;
+			}
+			.sheet__office-tile:hover {
+				background: var(--bg);
+			}
+			.sheet__office-badge {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				width: 44px;
+				height: 44px;
+				border-radius: var(--r-md);
+				font-size: 13px;
+				font-weight: 700;
+				letter-spacing: 0.02em;
+			}
+			.sheet__office-badge--doc {
+				background: var(--doc-soft);
+				color: var(--doc);
+			}
+			.sheet__office-badge--xls {
+				background: var(--xls-soft);
+				color: var(--xls);
+			}
+			.sheet__office-badge--ppt {
+				background: var(--ppt-soft);
+				color: var(--ppt);
+			}
+			.sheet__office-label {
+				font-size: 13px;
+				color: var(--ink-80);
+				white-space: nowrap;
 			}
 			.sheet__actions {
 				display: flex;
@@ -1004,22 +1070,6 @@
 					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-3v3h-2v-3H8v-2h3v-3h2v3h3v2zm-3-7V3.5L18.5 9H13z"
 				/>
 			</symbol>
-			<!-- Office 新建文档图标（与文档图标同构：折角 + 底部横线/网格标识） -->
-			<symbol id="i-doc" viewBox="0 0 24 24">
-				<path
-					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"
-				/>
-			</symbol>
-			<symbol id="i-sheet" viewBox="0 0 24 24">
-				<path
-					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14h-2v3h-2v-3H8v-2h2v-3h2v3h2v2h-2v3h-2v-3zm-3-7V3.5L18.5 9H13z"
-				/>
-			</symbol>
-			<symbol id="i-slide" viewBox="0 0 24 24">
-				<path
-					d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 14H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"
-				/>
-			</symbol>
 			<symbol id="i-edit" viewBox="0 0 24 24">
 				<path
 					d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"
@@ -1188,31 +1238,35 @@
 					<!-- CREATE DOCUMENT 区块：内置模板新建 Office 文档（逻辑在 editors.client.js） -->
 					<div id="new-office-section" class="sheet__group" x-show="canCreateOffice()">
 						<span class="sheet__group-title" x-text="t('createDocument')"></span>
-						<button
-							id="new-office-docx-button"
-							class="sheet__item"
-							@click="createOfficeDocument('docx')"
-							aria-label="New Word document"
-						>
-							<svg class="icon" aria-hidden="true"><use href="#i-doc"></use></svg><span x-text="t('newWord')"></span>
-						</button>
-						<button
-							id="new-office-xlsx-button"
-							class="sheet__item"
-							@click="createOfficeDocument('xlsx')"
-							aria-label="New Excel spreadsheet"
-						>
-							<svg class="icon" aria-hidden="true"><use href="#i-sheet"></use></svg><span x-text="t('newExcel')"></span>
-						</button>
-						<button
-							id="new-office-pptx-button"
-							class="sheet__item"
-							@click="createOfficeDocument('pptx')"
-							aria-label="New PowerPoint presentation"
-						>
-							<svg class="icon" aria-hidden="true"><use href="#i-slide"></use></svg
-							><span x-text="t('newPowerPoint')"></span>
-						</button>
+						<div class="sheet__office-row">
+							<button
+								id="new-office-docx-button"
+								class="sheet__office-tile"
+								@click="createOfficeDocument('docx')"
+								aria-label="New Word document"
+							>
+								<span class="sheet__office-badge sheet__office-badge--doc">DOC</span>
+								<span class="sheet__office-label" x-text="t('newWord')"></span>
+							</button>
+							<button
+								id="new-office-xlsx-button"
+								class="sheet__office-tile"
+								@click="createOfficeDocument('xlsx')"
+								aria-label="New Excel spreadsheet"
+							>
+								<span class="sheet__office-badge sheet__office-badge--xls">XLS</span>
+								<span class="sheet__office-label" x-text="t('newExcel')"></span>
+							</button>
+							<button
+								id="new-office-pptx-button"
+								class="sheet__office-tile"
+								@click="createOfficeDocument('pptx')"
+								aria-label="New PowerPoint presentation"
+							>
+								<span class="sheet__office-badge sheet__office-badge--ppt">PPT</span>
+								<span class="sheet__office-label" x-text="t('newPowerPoint')"></span>
+							</button>
+						</div>
 					</div>
 					<button
 						id="new-upload-button"
