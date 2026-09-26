@@ -1,40 +1,26 @@
 /**
- * Worker 入口：鉴权、CORS 与请求分发。
+ * Worker 入口：鉴权、CORS 与请求分发。本文件只做编排，不含任何具体业务 ——
  *
- * - WebDAV protocol simple implement（PROPFIND/PUT/COPY/…）：webdav.ts
+ *   WebDAV 协议（PROPFIND/PUT/COPY/…）        webdav.ts
+ *   页面与代码路由、目录数据                    ui.ts
+ *   在线编辑器（ONLYOFFICE/draw.io/Photopea）  editors.ts —— 三者的 path 与 handler 全在该模块
+ *   短链签名原语                              signing.ts
+ *   纯工具 + 结构化日志                        utils.ts
  */
 
 import { SUPPORT_METHODS, dispatch_handler } from './webdav';
 import { handle_asset_request } from './ui';
-import { log_error, log_info, log_warn, token_hint } from './log';
-// ONLYOFFICE 适配层（可选，整块可下线）：搜 ONLYOFFICE 就能找到全部接线点。
-import { ONLYOFFICE_TOKEN_PREFIX, handle_onlyoffice_request, onlyoffice_page_config } from './onlyoffice';
-import type { WebdavTransport } from './onlyoffice';
-// 外部编辑器（draw.io / Photopea）顶层直开：注册表 + Photopea 签名会话/保存端点。
-import {
-	EDITORS_READ_PREFIX,
-	EDITORS_SAVE_PREFIX,
-	create_photopea_session,
-	editors_page_config,
-	verify_save_token,
-} from './editors';
-import { base64_to_bytes, encode_path, json_response } from './utils';
+import { log_info, log_warn, token_hint } from './utils';
+import { handle_editors_request, is_token_request, page_config } from './editors';
+import type { EditorsEnv, WebdavTransport } from './editors';
 
-export interface Env {
+export interface Env extends EditorsEnv {
 	// Example binding to R2. Learn more at https://developers.cloudflare.com/workers/runtime-apis/r2/
 	bucket: R2Bucket;
 
 	// Variables defined in the "Environment Variables" section of the Wrangler CLI or dashboard
 	USERNAME: string;
 	PASSWORD: string;
-
-	// Shared HMAC secret for signed short links (ONLYOFFICE, drawio, …). Omit to disable.
-	SIGNING_SECRET?: string;
-	// Public base URL of this service, e.g. https://dav.example.com. Defaults to the request origin.
-	EMBED_BASE_URL?: string;
-	// External editor pages (embed-only, zero source modification). Both optional.
-	DRAWIO_EDITOR_URL?: string;
-	PHOTOPEA_EDITOR_URL?: string;
 }
 
 function is_authorized(authorization_header: string, username: string, password: string): boolean {
@@ -63,172 +49,19 @@ function inject_page_config(response: Response, config: unknown): Response {
 		.transform(response);
 }
 
-/**
- * 外部编辑器（Photopea）的服务端路由。
- *
- * - GET  /editors/session?path=…：签发读/写短链 + PP hash 启动 JSON（Basic 鉴权）。
- * - POST /editors/save/<write-token>：PP 保存端点（k0.aFs 的 POST 目标）。
- *   version 0 格式：body 是 application/x-www-form-urlencoded，`p` 字段是
- *   encodeURIComponent(JSON{source, versions:[{format, data:base64}]})。
- *   解出第一个 version 的字节原样 PUT 回 token 里的路径。
- *
- * 保存响应的 {newSource} 会被 PP 回写进文件 source（k0.aA0 源码），返回新 etag。
- */
-async function handle_editors_request(request: Request, env: Env, webdav: WebdavTransport): Promise<Response | null> {
-	const url = new URL(request.url);
-	const pathname = url.pathname;
-
-	if (pathname === '/editors/session' && request.method === 'GET') {
-		return await create_photopea_session(request, env, webdav);
-	}
-
-	if (pathname.startsWith(EDITORS_SAVE_PREFIX)) {
-		if (request.method !== 'POST' && request.method !== 'PUT') {
-			return json_response({ error: 'Method Not Allowed', allow: 'POST, PUT' }, 405);
-		}
-		const secret = env.SIGNING_SECRET;
-		if (!secret) return json_response({ error: 'Not configured' }, 501);
-		const token = pathname.slice(EDITORS_SAVE_PREFIX.length);
-		const payload = await verify_save_token(secret, token);
-		if (payload === null) return json_response({ error: 'Invalid or expired token' }, 403);
-
-		// 打点：到达这里 = 写 token 已验证；后续按「解析 → PUT → HEAD」逐步留痕。
-		log_info('pp.save', { path: `/${payload.path}`, declared: request.headers.get('content-length') ?? '?' });
-
-		const contentType = request.headers.get('Content-Type') ?? '';
-		const body = await request.text();
-		let bytes: Uint8Array;
-		if (contentType.includes('application/x-www-form-urlencoded')) {
-			// version 0：p=<encodeURIComponent(JSON)>，versions[].data 是 base64
-			const params = new URLSearchParams(body);
-			const encoded = params.get('p');
-			if (encoded === null) {
-				log_warn('pp.save rejected', { reason: 'missing_p_field', tok: token_hint(token) });
-				return json_response({ error: 'Missing "p" field' }, 400);
-			}
-			let parsed: { versions?: Array<{ data?: string }> };
-			try {
-				parsed = JSON.parse(decodeURIComponent(encoded));
-			} catch {
-				log_warn('pp.save rejected', { reason: 'malformed_json', tok: token_hint(token) });
-				return json_response({ error: 'Malformed payload' }, 400);
-			}
-			const data = parsed.versions && parsed.versions[0] && parsed.versions[0].data;
-			if (typeof data !== 'string') {
-				log_warn('pp.save rejected', { reason: 'missing_versions_data', tok: token_hint(token) });
-				return json_response({ error: 'Missing versions[0].data' }, 400);
-			}
-			const decoded = base64_to_bytes(data);
-			if (decoded === null) {
-				log_warn('pp.save rejected', { reason: 'bad_base64', tok: token_hint(token) });
-				return json_response({ error: 'Malformed payload (bad base64)' }, 400);
-			}
-			bytes = decoded;
-		} else {
-			// 兼容直发二进制（未来 PP 版本或自测用）
-			bytes = new Uint8Array(await request.arrayBuffer());
-		}
-		if (bytes.byteLength === 0) {
-			log_warn('pp.save rejected', { reason: 'empty_body', tok: token_hint(token) });
-			return json_response({ error: 'Refusing to write an empty body' }, 400);
-		}
-
-		const ext = payload.path.slice(payload.path.lastIndexOf('.') + 1).toLowerCase();
-		const type = photopea_content_type(ext);
-		const put = await webdav(
-			new Request(`${new URL(request.url).origin}/${encode_path(payload.path)}`, {
-				method: 'PUT',
-				headers: { 'Content-Type': type },
-				body: bytes,
-			}),
-		);
-		if (!put.ok) {
-			log_error('pp.save failed', { path: `/${payload.path}`, upstream: put.status });
-			return json_response({ error: `Upstream PUT failed (${put.status})` }, 502);
-		}
-		const head = await webdav(
-			new Request(`${new URL(request.url).origin}/${encode_path(payload.path)}`, { method: 'HEAD' }),
-		);
-		log_info('pp.save done', {
-			path: `/${payload.path}`,
-			bytes: bytes.byteLength,
-			etag: head.headers.get('etag') ?? 'none',
-		});
-		return json_response({
-			ok: true,
-			newSource: payload.path,
-			etag: head.ok ? head.headers.get('etag') : null,
-			...(head.ok ? {} : { warning: `HEAD failed (${head.status})` }),
-		});
-	}
-
-	if (pathname.startsWith(EDITORS_READ_PREFIX)) {
-		// PP 自己拉文件：把签名 token 换回真实路径，走内部 transport（已豁免 Basic）。
-		const secret = env.SIGNING_SECRET;
-		if (!secret) return json_response({ error: 'Not configured' }, 501);
-		const payload = await verify_save_token(secret, pathname.slice(EDITORS_READ_PREFIX.length), 'read');
-		if (payload === null) return json_response({ error: 'Invalid or expired token' }, 403);
-		if (payload.mode !== 'read') return json_response({ error: 'Token is not a read token' }, 403);
-		const head = await webdav(
-			new Request(`${new URL(request.url).origin}/${encode_path(payload.path)}`, { method: 'HEAD' }),
-		);
-		if (head.status === 404) {
-			log_warn('pp.read miss', {
-				path: `/${payload.path}`,
-				tok: token_hint(pathname.slice(pathname.lastIndexOf('/') + 1)),
-			});
-			return json_response({ error: 'Not found' }, 404);
-		}
-		const type =
-			head.headers.get('content-type') ??
-			photopea_content_type(payload.path.slice(payload.path.lastIndexOf('.') + 1).toLowerCase());
-		const get = await webdav(
-			new Request(`${new URL(request.url).origin}/${encode_path(payload.path)}`, { method: 'GET' }),
-		);
-		const headers = new Headers(get.headers);
-		headers.set('Cache-Control', 'no-store');
-		headers.set('Access-Control-Allow-Origin', '*');
-		if (!headers.has('Content-Type')) headers.set('Content-Type', type);
-		return new Response(get.body, { status: get.status, headers });
-	}
-
-	return null;
-}
-
-function photopea_content_type(ext: string): string {
-	const map: Record<string, string> = {
-		psd: 'image/vnd.adobe.photoshop',
-		psb: 'image/vnd.adobe.photoshop',
-		png: 'image/png',
-		jpg: 'image/jpeg',
-		jpeg: 'image/jpeg',
-		webp: 'image/webp',
-		gif: 'image/gif',
-		bmp: 'image/bmp',
-		tif: 'image/tiff',
-		tiff: 'image/tiff',
-		svg: 'image/svg+xml',
-	};
-	return map[ext] ?? 'application/octet-stream';
-}
-
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const { bucket } = env;
 		const started = Date.now();
 
 		// 签名模式（配了 SIGNING_SECRET）下跳过 Basic：调用方是浏览器里的在线服务，
-		// 跨源带不了凭据，由 URL 里的 HMAC token 负责校验。直连模式没有这条路由。
+		// 跨源带不了凭据，由 URL 里的 HMAC token 负责校验。直连模式没有这些路由。
+		// 哪些路径算 token 路由，只有 editors.ts 知道 —— 入口不做路径白名单。
 		const pathname = new URL(request.url).pathname;
-		const is_onlyoffice_token_request = Boolean(env.SIGNING_SECRET) && pathname.startsWith(ONLYOFFICE_TOKEN_PREFIX);
-		// Photopea 保存端点：PP 弹窗发起 POST，带不了 Basic —— 靠 URL 里的写 token 鉴权。
-		const is_editors_save_request =
-			Boolean(env.SIGNING_SECRET) &&
-			(pathname.startsWith(EDITORS_SAVE_PREFIX) || pathname.startsWith(EDITORS_READ_PREFIX));
+		const token_request = is_token_request(pathname, env);
 		if (
 			request.method !== 'OPTIONS' &&
-			!is_onlyoffice_token_request &&
-			!is_editors_save_request &&
+			!token_request &&
 			!is_authorized(request.headers.get('Authorization') ?? '', env.USERNAME, env.PASSWORD)
 		) {
 			// 打点：未授权（含完全没带凭据的探测流量）。凭据本身绝不落日志。
@@ -241,32 +74,21 @@ export default {
 			});
 		}
 
-		// 代码路由要先拦：这些路径在 R2 里没有同名对象，直接进 dispatch_handler 会 404。
-		//
 		// adapter 的读写走下面这个注入的「WebDAV 协议层」函数，**进程内调用**：
 		// 不能让它 fetch 自己的 hostname，生产环境 Worker 自调用会被平台拦掉（404 + 1042）。
 		const webdav_transport: WebdavTransport = (req) => dispatch_handler(req, bucket);
 
-		// 外部编辑器（Photopea）的两条服务端路由：会话签发（Basic 鉴权）与保存（写 token 鉴权）。
-		const editors_response = await handle_editors_request(request, env, webdav_transport);
+		// 在线编辑器（/onlyoffice/*、/editors/*）不认识就返回 null，逐层落下去。
 		let response: Response =
-			editors_response ??
-			(await handle_onlyoffice_request(request, env, webdav_transport)) ??
+			(await handle_editors_request(request, env, webdav_transport)) ??
 			handle_asset_request(request) ??
 			(await dispatch_handler(request, bucket));
 
-		// 页面里的「用 ONLYOFFICE 打开」入口需要编辑器地址与放行的扩展名；
-		// adapter 没开就返回 null，不注入任何东西。
-		const page_config = onlyoffice_page_config(env, request);
-		const editors = editors_page_config(env);
-		if (
-			(page_config !== null || editors !== null) &&
-			(response.headers.get('Content-Type') ?? '').startsWith('text/html')
-		) {
-			response = inject_page_config(response, {
-				...(page_config !== null ? { onlyoffice: page_config } : {}),
-				...(editors !== null ? { editors } : {}),
-			});
+		// 页面里的「在线编辑」入口需要编辑器地址与放行的扩展名；配置的拼装在 editors.ts，
+		// 都没开就返回 null，不注入任何东西。
+		const config = page_config(env, request);
+		if (config !== null && (response.headers.get('Content-Type') ?? '').startsWith('text/html')) {
+			response = inject_page_config(response, config);
 		}
 
 		// Set CORS headers
@@ -299,13 +121,12 @@ export default {
 		response.headers.set('MS-Author-Via', 'DAV');
 
 		// 打点：每条请求一行 access log。token 型请求只带前 12 位，凭据永不落日志。
-		const is_token_request = is_onlyoffice_token_request || is_editors_save_request;
 		log_info('req', {
 			method: request.method,
 			path: pathname,
 			status: response.status,
 			ms: Date.now() - started,
-			...(is_token_request ? { tok: token_hint(pathname.slice(pathname.lastIndexOf('/') + 1)) } : {}),
+			...(token_request ? { tok: token_hint(pathname.slice(pathname.lastIndexOf('/') + 1)) } : {}),
 		});
 
 		return response;

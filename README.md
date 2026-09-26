@@ -19,6 +19,7 @@
   <img src="docs/screenshots/browse-mobile.png" width="220" alt="目录列表：目录优先，图标按类型着色">
   <img src="docs/screenshots/actions-mobile.png" width="220" alt="长按弹出的操作面板">
   <img src="docs/screenshots/editor-preview-mobile.png" width="220" alt="在编辑器里直接查看 Markdown 渲染效果">
+	<img src="docs/screenshots/actions-sheet-new.png" width="220">
 </p>
 <p align="center"><sub>目录列表 · 长按弹出操作面板 · 编辑器里直接「查看」渲染效果（表格、代码块、mermaid 都会渲染）</sub></p>
 
@@ -157,18 +158,18 @@ npx wrangler secret put SIGNING_SECRET # ONLYOFFICE / Photopea 需要；draw.io 
 <summary><h2>项目结构：每个文件负责什么</h2></summary>
 
 ```
-src/index.ts             Worker 入口：Basic 鉴权、CORS、请求分发
+src/index.ts             Worker 入口：Basic 鉴权、CORS、请求分发（不含任何业务）
 src/webdav.ts            WebDAV 协议实现（唯一碰协议的地方）
-src/ui.ts                页面层：目录列表 JSON、预览类型判断、静态资源分发
+src/ui.ts                页面层：目录列表 JSON、预览类型判断、代码路由分发
 src/index.html           整个浏览器界面（HTML + CSS + 内联 Alpine 组件）
-src/archive.client.js    浏览器端 zip 打包 / 解压（独立模块，可整个删掉，页面不受影响）
-src/archive.client.d.ts  上面那个文件的类型声明（作为 Text 模块导入需要）
+src/_app/                浏览器端脚本（URL 前缀 /_app/ 一一对应）：
+  archive.client.js        zip 打包 / 解压（独立模块，可整个删掉，页面不受影响）
+  editors.client.js        在线编辑器入口 + 新建 Office 文档（内置空白模板也在这）
 src/r2.ts                R2 访问工具：路径编解码、列表、并发控制、OS 元数据过滤
-src/onlyoffice.ts        可选：ONLYOFFICE 打开 / 保存 adapter（可整块删掉，其余代码不受影响）
-src/editors.ts           可选：draw.io / Photopea 顶层直开（可整块删掉，其余代码不受影响）
-src/editors.client.js    上面那个模块的浏览器端脚本（文本模块）
-src/office.templates.js  内置的空白 Office 模板（base64，文本模块）
-src/signing.ts           短链签名原语（多个在线服务共用一把 SIGNING_SECRET）
+src/editors.ts           可选：三个在线编辑器的路由与 handler（ONLYOFFICE / draw.io /
+                         Photopea），可整块删掉，其余代码不受影响
+src/signing.ts           短链签名原语（三个编辑器共用一把 SIGNING_SECRET）
+src/utils.ts             纯工具 + 结构化日志（HTTP 响应、路径、base64、log_*）
 docs/webdav-fix-list.md  协议层的缺陷清单与修复记录
 docs/deploy.md           部署 / 构建期的细节与常见的坑
 docs/onlyoffice.md       ONLYOFFICE adapter 的协议说明、启用方式与自测

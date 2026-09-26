@@ -23,8 +23,3 @@ declare module '*.client.js' {
 	const source: string;
 	export default source;
 }
-/** 同 .client.js：office.templates.js 也是文本模块（allowJs=false，不让真文件进编译图）。 */
-declare module '*.templates.js' {
-	const source: string;
-	export default source;
-}
